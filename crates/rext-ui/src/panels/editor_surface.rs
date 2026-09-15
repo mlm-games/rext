@@ -736,16 +736,15 @@ fn paint_matching_brackets(
             ed.display.point_to_display(buf, buf.point_of(e)).column,
         ) - x0)
             .max(6.0);
-        scope.draw_rect_stroke(
+        scope.draw_rect(
             Rect {
                 x: x0 - 1.0,
                 y: y + 1.0,
                 w: w + 2.0,
                 h: LINE_H - 2.0,
             },
-            chrome.caret,
-            Px(0.0),
-            Px(1.0),
+            chrome.bracket_match,
+            Px(2.0),
         );
     }
 }
