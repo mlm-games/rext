@@ -710,6 +710,17 @@ fn paint_matching_brackets(
     let Some((open, close)) = session.syntax.enclosing_brackets(lang, &full_text, offset) else {
         return;
     };
+    // Adjacency gate: only highlight when the caret touches or sits
+    // immediately beside one of the pair's brackets. Without this, any caret
+    // deep inside a block would wash its far-away braces.
+    let adjacent = open.contains(&offset)
+        || close.contains(&offset)
+        || open.end == offset
+        || close.end == offset
+        || (offset > 0 && (open.contains(&(offset - 1)) || close.contains(&(offset - 1))));
+    if !adjacent {
+        return;
+    }
     let byte_to_char = |b: usize| {
         full_text[..b.min(full_text.len())].chars().count()
     };
