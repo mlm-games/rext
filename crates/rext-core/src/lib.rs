@@ -3,6 +3,7 @@
 
 mod buffer;
 mod diagnostics;
+mod diff;
 mod display_map;
 mod history;
 mod selection;
@@ -12,6 +13,7 @@ mod workspace;
 
 pub use buffer::{Buffer, BufferId, Point};
 pub use diagnostics::{Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticsStore, Severity};
+pub use diff::{BufferDiff, DiffHunk, DiffStore, HunkKind, compute_diff};
 pub use display_map::{DisplayMap, DisplayPoint, SoftWrap};
 pub use history::{Edit, History};
 pub use selection::{Selection, SelectionGoal, Selections};

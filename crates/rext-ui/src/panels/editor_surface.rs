@@ -227,6 +227,29 @@ fn paint(
         .map(|s| s.head().row)
         .collect();
 
+    // Diff hunks for the visible window, resolved to (row_range, color).
+    // Deleted hunks are zero-width at the deletion row: paint the marker on
+    // that row itself. `session.diffs` is a separate RefCell from `ws`, so
+    // borrowing both is safe.
+    let diff_marks: Vec<(std::ops::Range<usize>, Color)> = {
+        let active_id = ws.active_id();
+        let diffs = session.diffs.borrow();
+        match active_id.and_then(|id| diffs.get(&id)) {
+            None => Vec::new(),
+            Some(d) => d
+                .hunks_intersecting_rows(first..last)
+                .map(|h| {
+                    let color = match h.kind {
+                        rext_core::HunkKind::Added => chrome.diff_added,
+                        rext_core::HunkKind::Modified => chrome.diff_modified,
+                        rext_core::HunkKind::Deleted => chrome.diff_deleted,
+                    };
+                    (h.buffer_rows.clone(), color)
+                })
+                .collect(),
+        }
+    };
+
     for row in first..last {
         let y = (row - first) as f32 * LINE_H;
         let display = ed.display.display_line(buf, row);
@@ -296,6 +319,29 @@ fn paint(
             },
             Px(FONT_PX * 0.85),
         );
+
+        for (range, color) in &diff_marks {
+            // Non-empty ranges use contains; deleted (empty) hunks paint on
+            // their anchor row.
+            let hit = if range.is_empty() {
+                range.start == row
+            } else {
+                range.contains(&row)
+            };
+            if hit {
+                scope.draw_rect(
+                    Rect {
+                        x: gutter_w - 4.0,
+                        y: y + 3.0,
+                        w: 3.0,
+                        h: LINE_H - 6.0,
+                    },
+                    *color,
+                    Px(0.0),
+                );
+                break;
+            }
+        }
 
         if !display.is_empty() {
             // Code text: JetBrains Mono via font-awl `monospace` feature.

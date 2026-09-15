@@ -1,4 +1,4 @@
-use rext_core::{Cmd, DiagnosticsStore, ResolvedTask, TaskContext, TaskInventory, Workspace};
+use rext_core::{Cmd, DiagnosticsStore, DiffStore, ResolvedTask, TaskContext, TaskInventory, Workspace};
 use repose_core::*;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -16,6 +16,7 @@ pub struct Session {
     pub diagnostics: RefCell<DiagnosticsStore>,
     pub tasks: RefCell<TaskInventory>,
     pub pending_spawns: RefCell<Vec<ResolvedTask>>,
+    pub diffs: RefCell<DiffStore>,
 }
 
 #[derive(Clone, Debug)]
@@ -44,9 +45,13 @@ impl Session {
             }
             _ => {}
         }
+        let is_save = matches!(cmd, Cmd::Save);
         let changed = self.ws.borrow_mut().exec(cmd, extend);
         if changed {
             self.bump();
+            if is_save {
+                self.refresh_diffs();
+            }
         }
     }
 
@@ -131,7 +136,10 @@ impl Session {
 
     pub fn open_file(&self, path: &Path) {
         match self.ws.borrow_mut().open_path(path) {
-            Ok(_) => self.bump(),
+            Ok(_) => {
+                self.bump();
+                self.refresh_diffs();
+            }
             Err(e) => {
                 self.ws.borrow_mut().status = format!("{e}");
                 self.bump();
@@ -319,6 +327,7 @@ pub fn use_session() -> SessionRef {
             diagnostics: RefCell::new(DiagnosticsStore::default()),
             tasks: RefCell::new(TaskInventory::default()),
             pending_spawns: RefCell::new(Vec::new()),
+            diffs: RefCell::new(DiffStore::default()),
             ws: RefCell::new(Workspace::new(root, initial)),
         }
     })
@@ -328,6 +337,19 @@ impl Session {
     pub fn refresh_tasks(&self) {
         let root = self.ws.borrow().root.clone();
         self.tasks.borrow_mut().refresh(&root);
+    }
+
+    pub fn refresh_diffs(&self) {
+        let ws = self.ws.borrow();
+        let root = ws.root.clone();
+        let mut diffs = self.diffs.borrow_mut();
+        for (id, handle) in ws.buffers.iter() {
+            let base = handle
+                .buffer
+                .path()
+                .and_then(|p| git_head_version(&root, p));
+            diffs.update(*id, base, &handle.buffer);
+        }
     }
 
     pub fn task_context(&self) -> TaskContext {
@@ -458,4 +480,17 @@ impl Session {
         drop(ws);
         self.bump();
     }
+}
+
+pub fn git_head_version(root: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(root).ok()?;
+    let out = std::process::Command::new("git")
+        .args(["show", &format!("HEAD:{}", rel.display())])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8(out.stdout).ok()
 }

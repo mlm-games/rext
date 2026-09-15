@@ -12,6 +12,9 @@ pub struct EditorChrome {
     pub caret: Color,
     pub selection: Color,
     pub border: Color,
+    pub diff_added: Color,
+    pub diff_modified: Color,
+    pub diff_deleted: Color,
 }
 
 pub fn zed_chrome() -> EditorChrome {
@@ -25,6 +28,9 @@ pub fn zed_chrome() -> EditorChrome {
         caret: Color::from_rgb(0x52, 0x8B, 0xFF),
         selection: Color::from_rgba(0x52, 0x8B, 0xFF, 0x40),
         border: Color::from_rgb(0x36, 0x3C, 0x46),
+        diff_added: Color::from_rgb(0x98, 0xC3, 0x79),
+        diff_modified: Color::from_rgb(0xE5, 0xC0, 0x7B),
+        diff_deleted: Color::from_rgb(0xE0, 0x6C, 0x75),
     }
 }
 
