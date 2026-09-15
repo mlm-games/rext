@@ -1,5 +1,5 @@
 #![allow(non_snake_case)]
-//! The text surface. Same shape as renamite-ui/src/panels/viewport.rs —
+//! The text surface. Same shape as renamite-ui/src/panels/viewport.rs -
 //! a `repose_canvas::Canvas` with pointer/key/scroll modifiers, painting only
 //! the visible line window. Coordinates are px (see repose-canvas docs).
 

@@ -351,7 +351,7 @@ fn ensure_visible(h: &mut BufferHandle, vis: usize) {
 }
 
 const WELCOME: &str = "\
-// rext — Zed-like editor on Repose
+// rext (dogfood for text-perf., currently zed-like)
 //
 // Ctrl+P  command palette
 // Ctrl+S  save · Ctrl+Z / Ctrl+Shift+Z undo/redo

@@ -116,7 +116,7 @@ pub fn use_session() -> SessionRef {
         let tree = list_dir(&root, 0);
         // NOTE: plain `Mutable::new` here, NOT `remember_mutable_with_key`:
         // this closure already runs inside `remember_with_key`'s init, which
-        // holds the composer borrow — a nested remember would panic with
+        // holds the composer borrow - a nested remember would panic with
         // "RefCell already borrowed". The Session itself is remembered, so
         // these Mutables persist across frames anyway.
         Session {

@@ -56,7 +56,7 @@ fn default_dock() -> DockState {
 
 pub fn EditorShell(session: SessionRef) -> View {
     let th = theme();
-    // showcase pattern: remember_with_key → Rc<RefCell<DockState>>
+    // showcase pattern: remember_with_key -> Rc<RefCell<DockState>>
     let dock = remember_with_key("rext:dock", || RefCell::new(default_dock()));
 
     let s_files = session.clone();

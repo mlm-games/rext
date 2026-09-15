@@ -1,4 +1,4 @@
-//! Buffer → display rows. Soft-wrap stub (wrap width in px later).
+//! Buffer -> display rows. Soft-wrap stub (wrap width in px later).
 //! This is the seam tree-sitter / folds / inlays plug into later.
 
 use crate::buffer::{Buffer, Point};
@@ -31,7 +31,7 @@ impl Default for DisplayMap {
 }
 
 impl DisplayMap {
-    /// Expanded line for paint (tabs → spaces). No wrap yet.
+    /// Expanded line for paint (tabs -> spaces). No wrap yet.
     pub fn display_line(&self, buf: &Buffer, row: usize) -> String {
         let raw = buf.line(row);
         if self.tab_width <= 1 || !raw.contains('\t') {

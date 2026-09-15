@@ -1,4 +1,4 @@
-//! Line metrics via repose_text — same font path as Canvas draw_text (family None).
+//! Line metrics via repose_text - same font path as Canvas draw_text (family None).
 
 use repose_text::{TextMetrics, metrics_for_textfield};
 use std::collections::HashMap;
@@ -8,7 +8,7 @@ const FONT_STYLE: u8 = 0;
 
 #[derive(Default)]
 pub struct LineMetricsCache {
-    /// (buffer_version, row) → metrics for display line string
+    /// (buffer_version, row) -> metrics for display line string
     map: HashMap<(u64, usize), (String, TextMetrics)>,
 }
 
