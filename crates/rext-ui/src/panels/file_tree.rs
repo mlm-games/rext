@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 use repose_core::prelude::*;
+use repose_core::modifier::PaddingValues;
 use repose_material::{Icon, material_symbols};
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::*;
@@ -56,7 +57,12 @@ pub fn FileTreePanel(session: SessionRef) -> View {
                 .key(i as u64)
                 .fill_max_width()
                 .height(Dp(24.0))
-                .padding(Dp(indent))
+                .padding_values(PaddingValues {
+                    left: Dp(indent),
+                    right: Dp(8.0),
+                    top: Dp(0.0),
+                    bottom: Dp(0.0),
+                })
                 .align_items(AlignItems::CENTER)
                 .gap(Dp(4.0))
                 .on_click(move || {
