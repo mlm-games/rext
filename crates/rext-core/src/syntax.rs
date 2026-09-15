@@ -63,11 +63,13 @@ fn scope_for(name: &str) -> Option<Scope> {
 
 struct Language {
     config: HighlightConfiguration,
+    ts_language: tree_sitter::Language,
 }
 
 pub struct SyntaxRegistry {
     languages: HashMap<&'static str, Language>,
     highlighter: Mutex<Highlighter>,
+    parser: Mutex<tree_sitter::Parser>,
 }
 
 impl SyntaxRegistry {
@@ -75,16 +77,20 @@ impl SyntaxRegistry {
         let mut languages = HashMap::new();
         languages.insert("rust", Language {
             config: rust_config(),
+            ts_language: tree_sitter_rust::LANGUAGE.into(),
         });
         languages.insert("json", Language {
             config: json_config(),
+            ts_language: tree_sitter_json::LANGUAGE.into(),
         });
         languages.insert("python", Language {
             config: python_config(),
+            ts_language: tree_sitter_python::LANGUAGE.into(),
         });
         Self {
             languages,
             highlighter: Mutex::new(Highlighter::new()),
+            parser: Mutex::new(tree_sitter::Parser::new()),
         }
     }
 
@@ -96,6 +102,48 @@ impl SyntaxRegistry {
             "py" | "pyw" | "pyi" => Some("python"),
             _ => None,
         }
+    }
+
+    pub fn enclosing_brackets(
+        &self,
+        lang: &str,
+        text: &str,
+        offset: usize,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        let language = self.languages.get(lang)?;
+        let Ok(mut parser) = self.parser.lock() else {
+            return None;
+        };
+        parser.set_language(&language.ts_language).ok()?;
+        let tree = parser.parse(text, None)?;
+        let mut cursor = tree.walk();
+        // Descend to the innermost named node containing offset.
+        let mut node = tree.root_node();
+        loop {
+            let mut descended = false;
+            let mut child_cursor = node.walk();
+            for child in node.children(&mut child_cursor) {
+                let r = child.byte_range();
+                if r.start <= offset && offset <= r.end && child.is_named() {
+                    node = child;
+                    descended = true;
+                    break;
+                }
+            }
+            if !descended {
+                break;
+            }
+        }
+        // Walk up looking for a paired bracket node.
+        let mut current = Some(node);
+        while let Some(n) = current {
+            if let Some(pair) = paired_brackets(&n, text) {
+                return Some(pair);
+            }
+            current = n.parent();
+        }
+        let _ = &mut cursor;
+        None
     }
 
     pub fn highlight(
@@ -189,6 +237,63 @@ fn python_config() -> HighlightConfiguration {
     config
 }
 
+fn paired_brackets(node: &tree_sitter::Node, text: &str) -> Option<(Range<usize>, Range<usize>)> {
+    let kind = node.kind();
+    let _ = text;
+    // Direct bracket children (arguments, block, array, …).
+    if let Some(pair) = direct_brackets(node) {
+        return Some(pair);
+    }
+    // Wrapper nodes (call_expression, if_statement, …): look one level down
+    // for the first bracket-holding child.
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if !child.is_named() {
+            continue;
+        }
+        match child.kind() {
+            "arguments" | "parameters" | "tuple_expression" | "tuple_pattern" | "tuple_type"
+            | "array" | "array_expression" | "array_pattern" | "block" | "declaration_list"
+            | "dictionary" | "list" | "set" | "tuple" | "parameters_list" | "argument_list"
+            | "parenthesized_expression" | "subscript_expression" | "subscript"
+            | "condition" | "alternative" | "consequence" => {
+                if let Some(pair) = direct_brackets(&child) {
+                    return Some(pair);
+                }
+            }
+            _ => {}
+        }
+    }
+    let _ = kind;
+    None
+}
+
+fn direct_brackets(node: &tree_sitter::Node) -> Option<(Range<usize>, Range<usize>)> {
+    let mut open_range: Option<Range<usize>> = None;
+    let mut close_range: Option<Range<usize>> = None;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.is_named() {
+            continue;
+        }
+        match child.kind() {
+            "(" | "[" | "{" => {
+                if open_range.is_none() {
+                    open_range = Some(child.byte_range());
+                }
+            }
+            ")" | "]" | "}" => {
+                close_range = Some(child.byte_range());
+            }
+            _ => {}
+        }
+    }
+    match (open_range, close_range) {
+        (Some(o), Some(c)) => Some((o, c)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +311,18 @@ mod tests {
         assert!(has(Scope::String, "\"hi\"", src));
         assert!(has(Scope::Comment, "// c", src));
         assert!(has(Scope::Function, "main", src));
+    }
+
+    #[test]
+    fn enclosing_brackets_rust() {
+        let reg = SyntaxRegistry::new();
+        let src = "fn main() {\n    foo(1);\n}\n";
+        let off = src.find("foo").unwrap() + 1;
+        let pair = reg.enclosing_brackets("rust", src, off);
+        assert!(pair.is_some());
+        let (open, close) = pair.unwrap();
+        assert_eq!(&src[open], "(");
+        assert_eq!(&src[close], ")");
     }
 
     #[test]
