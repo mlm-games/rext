@@ -7,6 +7,9 @@ mod palette;
 mod panels;
 mod session;
 mod shell;
+mod term_grid;
+mod term_pty;
+mod term_vte;
 
 use repose_core::*;
 use repose_ui::*;
