@@ -12,7 +12,7 @@ repose-material.workspace = true
 repose-canvas.workspace = true
 repose-docking.workspace = true
 repose-platform.workspace = true
-repose-text.workspace = true
+repose-text = { workspace = true, features = ["monospace"] }
 portable-pty.workspace = true
 vte.workspace = true
 log.workspace = true

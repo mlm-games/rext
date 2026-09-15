@@ -13,7 +13,7 @@ use repose_ui::*;
 
 use crate::chrome::{layout::*, zed_chrome};
 use crate::keymap::{self, AppAction};
-use crate::metrics_cache::LineMetricsCache;
+use crate::metrics_cache::{CODE_FAMILY, LineMetricsCache};
 use crate::session::SessionRef;
 
 pub fn EditorSurface(session: SessionRef) -> View {
@@ -266,7 +266,7 @@ fn paint(
             }
         }
 
-        // line number
+        // line number (UI font — gutter is chrome, not code)
         let num = format!("{}", row + 1);
         let nx = gutter_w - GUTTER_PAD - num.len() as f32 * FONT_PX * 0.55;
         scope.draw_text(
@@ -284,7 +284,10 @@ fn paint(
         );
 
         if !display.is_empty() {
-            scope.draw_text(
+            // Code text: JetBrains Mono via font-awl `monospace` feature.
+            // Same family as the metrics cache so caret/selection agree
+            // with the painted glyphs.
+            scope.draw_text_with_family(
                 display,
                 Vec2 {
                     x: text_x,
@@ -292,6 +295,7 @@ fn paint(
                 },
                 chrome.text,
                 Px(FONT_PX),
+                CODE_FAMILY,
             );
         }
     }

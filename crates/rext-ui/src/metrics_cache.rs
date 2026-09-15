@@ -1,7 +1,14 @@
-//! Line metrics via repose_text - same font path as Canvas draw_text (family None).
+//! Line metrics via repose_text — same font path as Canvas code text
+//! (`font_family = Some("monospace")` → JetBrains Mono when the
+//! `repose-text/monospace` feature is enabled, system monospace otherwise).
 
 use repose_text::{TextMetrics, metrics_for_textfield};
 use std::collections::HashMap;
+
+/// Font family for all code surface text. Must match the family passed to
+/// `draw_text_with_family` in the surface paint — metrics and paint go
+/// through the same parley stack, so hit-test and glyphs agree.
+pub const CODE_FAMILY: Option<&str> = Some("monospace");
 
 const FONT_WEIGHT: u16 = 400;
 const FONT_STYLE: u8 = 0;
@@ -29,7 +36,7 @@ impl LineMetricsCache {
             let m = metrics_for_textfield(
                 display_line,
                 font_px,
-                None,
+                CODE_FAMILY,
                 FONT_WEIGHT,
                 FONT_STYLE,
                 0.0,
