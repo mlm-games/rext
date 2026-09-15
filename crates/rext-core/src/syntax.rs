@@ -1,7 +1,21 @@
+use rust_embed::RustEmbed;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Mutex;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+
+#[derive(RustEmbed)]
+#[folder = "grammars/"]
+struct GrammarDir;
+
+pub fn load_queries(name: &str) -> &'static str {
+    let path = format!("{name}/highlights.scm");
+    let file = GrammarDir::get(&path)
+        .unwrap_or_else(|| panic!("missing highlights.scm for language {name:?}"));
+    let text = std::str::from_utf8(&file.data)
+        .unwrap_or_else(|_| panic!("highlights.scm for {name:?} is not UTF-8"));
+    Box::leak(text.to_string().into_boxed_str())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Scope {
@@ -65,6 +79,9 @@ impl SyntaxRegistry {
         languages.insert("json", Language {
             config: json_config(),
         });
+        languages.insert("python", Language {
+            config: python_config(),
+        });
         Self {
             languages,
             highlighter: Mutex::new(Highlighter::new()),
@@ -76,6 +93,7 @@ impl SyntaxRegistry {
         match ext {
             "rs" => Some("rust"),
             "json" | "jsonc" => Some("json"),
+            "py" | "pyw" | "pyi" => Some("python"),
             _ => None,
         }
     }
@@ -136,7 +154,7 @@ fn rust_config() -> HighlightConfiguration {
     let mut config = HighlightConfiguration::new(
         tree_sitter_rust::LANGUAGE.into(),
         "rust",
-        RUST_HIGHLIGHTS,
+        load_queries("rust"),
         "",
         "",
     )
@@ -149,7 +167,7 @@ fn json_config() -> HighlightConfiguration {
     let mut config = HighlightConfiguration::new(
         tree_sitter_json::LANGUAGE.into(),
         "json",
-        JSON_HIGHLIGHTS,
+        load_queries("json"),
         "",
         "",
     )
@@ -158,49 +176,18 @@ fn json_config() -> HighlightConfiguration {
     config
 }
 
-const RUST_HIGHLIGHTS: &str = r#"
-(line_comment) @comment
-(block_comment) @comment
-(string_literal) @string
-(raw_string_literal) @string
-(char_literal) @string
-(boolean_literal) @number
-(integer_literal) @number
-(float_literal) @number
-[
-  "fn" "let" "const" "static" "struct" "enum" "impl" "trait"
-  "pub" "use" "mod"
-  "if" "else" "match" "for" "while" "loop" "in" "return"
-  "break" "continue" "where" "async" "await" "move" "ref"
-  "type" "union" "unsafe" "extern" "dyn" "as" "try" "default" "gen" "yield"
-] @keyword
-(type_identifier) @type
-(primitive_type) @type.builtin
-(self) @variable.special
-(field_identifier) @property
-(call_expression function: (identifier) @function)
-(call_expression function: (field_expression field: (field_identifier) @function))
-(function_item name: (identifier) @function)
-(macro_invocation macro: (identifier) @function)
-(lifetime) @type
-[
-  "=" "+" "-" "*" "/" "%" "!" "==" "!=" "<" ">" "<=" ">="
-  "&&" "||" "&" "|" "^" "<<" ">>" "+=" "-=" "*=" "/=" "%="
-  "->" "=>" "::" ":" ";" "," "." ".." "..=" "@" "_" "?"
-] @operator
-[
-  "(" ")" "[" "]" "{" "}"
-] @punctuation
-"#;
-
-const JSON_HIGHLIGHTS: &str = r#"
-(string) @string
-(number) @number
-[(true) (false) (null)] @number
-[
-  "{" "}" "[" "]" ":" ","
-] @punctuation
-"#;
+fn python_config() -> HighlightConfiguration {
+    let mut config = HighlightConfiguration::new(
+        tree_sitter_python::LANGUAGE.into(),
+        "python",
+        load_queries("python"),
+        "",
+        "",
+    )
+    .expect("python highlights query");
+    config.configure(HIGHLIGHT_NAMES);
+    config
+}
 
 #[cfg(test)]
 mod tests {
@@ -225,5 +212,20 @@ mod tests {
     fn unknown_language_empty() {
         let reg = SyntaxRegistry::new();
         assert!(reg.highlight("cobol", "hello").is_empty());
+    }
+
+    #[test]
+    fn python_basics() {
+        let reg = SyntaxRegistry::new();
+        let src = "import os\n\ndef greet(name):\n    # hi\n    return f\"hi {name}\"\n";
+        let spans = reg.highlight("python", src);
+        let has = |scope: Scope, text: &str| {
+            spans.iter().any(|(r, s)| *s == scope && &src[r.clone()] == text)
+        };
+        assert!(has(Scope::Keyword, "import"));
+        assert!(has(Scope::Keyword, "def"));
+        assert!(has(Scope::Keyword, "return"));
+        assert!(has(Scope::Function, "greet"));
+        assert!(has(Scope::Comment, "# hi"));
     }
 }
