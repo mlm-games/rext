@@ -539,7 +539,8 @@ impl Session {
     }
 
     pub fn jump_to_active(&self, point: rext_core::Point) {
-        if let Some(id) = self.ws.borrow().active_id() {
+        let id = self.ws.borrow().active_id();
+        if let Some(id) = id {
             self.jump_to(id, point);
         }
     }
