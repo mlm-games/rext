@@ -1,4 +1,4 @@
-use rext_core::{Cmd, Workspace};
+use rext_core::{Cmd, DiagnosticsStore, Workspace};
 use repose_core::*;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,7 @@ pub struct Session {
     pub palette_query: Mutable<String>,
     pub palette_sel: Mutable<usize>,
     pub tree: RefCell<Vec<TreeEntry>>,
+    pub diagnostics: RefCell<DiagnosticsStore>,
 }
 
 #[derive(Clone, Debug)]
@@ -313,7 +314,78 @@ pub fn use_session() -> SessionRef {
             palette_query: Mutable::new(String::new()),
             palette_sel: Mutable::new(0usize),
             tree: RefCell::new(tree),
+            diagnostics: RefCell::new(DiagnosticsStore::default()),
             ws: RefCell::new(Workspace::new(root, initial)),
         }
     })
+}
+
+impl Session {
+    pub fn refresh_lints(&self) {
+        use crate::panels::problems::lint_buffer;
+        use rext_core::DiagnosticSet;
+        let ws = self.ws.borrow();
+        let mut store = self.diagnostics.borrow_mut();
+        store.clear_source("rext-lint");
+        for (id, handle) in ws.buffers.iter() {
+            let entries = lint_buffer(*id, &handle.buffer);
+            if !entries.is_empty() {
+                let mut set = store.get(id).cloned().unwrap_or_default();
+                set.merge(entries);
+                store.set(*id, set);
+            }
+        }
+    }
+
+    pub fn problem_counts(&self) -> (usize, usize) {
+        self.diagnostics.borrow().total_counts()
+    }
+
+    pub fn problem_items(&self) -> Vec<crate::panels::problems::ProblemItem> {
+        let ws = self.ws.borrow();
+        let store = self.diagnostics.borrow();
+        store
+            .all_entries()
+            .into_iter()
+            .map(|(id, e)| {
+                let title = ws
+                    .buffers
+                    .get(&id)
+                    .map(|h| h.buffer.title())
+                    .unwrap_or_else(|| "?".into());
+                crate::panels::problems::ProblemItem {
+                    severity: e.diagnostic.severity,
+                    message: e.diagnostic.message.clone(),
+                    location: format!(
+                        "{}:{}:{}",
+                        title,
+                        e.range.start.row + 1,
+                        e.range.start.column + 1
+                    ),
+                    target: Some((id, e.range.start)),
+                }
+            })
+            .collect()
+    }
+
+    pub fn jump_to(&self, id: rext_core::BufferId, point: rext_core::Point) {
+        use rext_core::Selection;
+        let mut ws = self.ws.borrow_mut();
+        if let Some(idx) = ws.tab_order.iter().position(|b| *b == id) {
+            ws.active = idx;
+        }
+        if let Some(h) = ws.active_mut() {
+            h.selections
+                .replace_all(&h.buffer, vec![Selection::caret(point)]);
+            let vis = 40;
+            let row = point.row;
+            if row < h.scroll_row {
+                h.scroll_row = row;
+            } else if row >= h.scroll_row + vis {
+                h.scroll_row = row + 1 - vis;
+            }
+        }
+        drop(ws);
+        self.bump();
+    }
 }

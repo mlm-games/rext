@@ -2,6 +2,7 @@
 //! History captures inverses at apply (Renamite-style), never full rope clones.
 
 mod buffer;
+mod diagnostics;
 mod display_map;
 mod history;
 mod selection;
@@ -9,6 +10,7 @@ mod snippet;
 mod workspace;
 
 pub use buffer::{Buffer, BufferId, Point};
+pub use diagnostics::{Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticsStore, Severity};
 pub use display_map::{DisplayMap, DisplayPoint, SoftWrap};
 pub use history::{Edit, History};
 pub use selection::{Selection, SelectionGoal, Selections};
