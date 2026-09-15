@@ -141,7 +141,11 @@ impl Session {
     }
 
     pub fn open_file(&self, path: &Path) {
-        match self.ws.borrow_mut().open_path(path) {
+        // Bind first: matching directly on `self.ws.borrow_mut().open_path()`
+        // keeps the RefMut alive through the arms, and refresh_diffs()
+        // borrows ws again → panic.
+        let result = self.ws.borrow_mut().open_path(path);
+        match result {
             Ok(_) => {
                 self.bump();
                 self.refresh_diffs();
