@@ -1,13 +1,13 @@
 use crate::buffer::{Buffer, BufferId, Point};
 use crate::display_map::DisplayMap;
 use crate::history::{Edit, History};
-use crate::selection::Selection;
+use crate::selection::{Selection, SelectionGoal, Selections};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct BufferHandle {
     pub buffer: Buffer,
-    pub selection: Selection,
+    pub selections: Selections,
     pub history: History,
     pub scroll_row: usize,
     pub goal_column: Option<usize>,
@@ -18,12 +18,20 @@ impl BufferHandle {
     pub fn new(buffer: Buffer) -> Self {
         Self {
             buffer,
-            selection: Selection::default(),
+            selections: Selections::default(),
             history: History::default(),
             scroll_row: 0,
             goal_column: None,
             display: DisplayMap::default(),
         }
+    }
+
+    pub fn selection(&self) -> Selection {
+        self.selections.primary()
+    }
+
+    pub fn head(&self) -> Point {
+        self.selections.primary().head()
     }
 }
 
@@ -168,13 +176,12 @@ impl Workspace {
             Cmd::SetCaret { point, extend } => {
                 if let Some(h) = self.active_mut() {
                     h.history.seal();
+                    let point = clamp_point(&h.buffer, point);
                     if extend {
-                        if h.selection.is_empty() {
-                            h.selection.anchor = h.selection.head;
-                        }
-                        h.selection.head = clamp_point(&h.buffer, point);
+                        h.selections.primary_mut().set_head(point, SelectionGoal::None);
                     } else {
-                        h.selection = Selection::caret(clamp_point(&h.buffer, point));
+                        h.selections
+                            .replace_all(&h.buffer, vec![Selection::caret(point)]);
                     }
                     h.goal_column = None;
                     ensure_visible(h, 40);
@@ -199,14 +206,15 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
         Newline => replace_sel(h, "\n", "newline"),
         Tab => replace_sel(h, "    ", "type"),
         Backspace => {
-            if !h.selection.is_empty() {
+            if h.selections.all().iter().any(|s| !s.is_empty()) {
                 replace_sel(h, "", "delete");
             } else {
-                let off = h.buffer.offset_of(h.selection.head);
+                let head = h.head();
+                let off = h.buffer.offset_of(head);
                 if off == 0 {
                     return false;
                 }
-                h.history.begin("backspace", h.selection.head);
+                h.history.begin("backspace", head);
                 let text = h.buffer.slice_chars(off - 1, off);
                 h.history.apply(
                     &mut h.buffer,
@@ -215,86 +223,73 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
                         text,
                     },
                 );
-                h.selection = Selection::caret(h.buffer.point_of(off - 1));
-                h.history.commit(h.selection.head);
+                let np = h.buffer.point_of(off - 1);
+                h.selections
+                    .replace_all(&h.buffer, vec![Selection::caret(np)]);
+                h.history.commit(np);
                 h.goal_column = None;
             }
         }
         Delete => {
-            if !h.selection.is_empty() {
+            if h.selections.all().iter().any(|s| !s.is_empty()) {
                 replace_sel(h, "", "delete");
             } else {
-                let off = h.buffer.offset_of(h.selection.head);
+                let head = h.head();
+                let off = h.buffer.offset_of(head);
                 if off >= h.buffer.len_chars() {
                     return false;
                 }
-                h.history.begin("delete", h.selection.head);
+                h.history.begin("delete", head);
                 let text = h.buffer.slice_chars(off, off + 1);
                 h.history
                     .apply(&mut h.buffer, Edit::Delete { at: off, text });
-                h.history.commit(h.selection.head);
+                h.history.commit(head);
                 h.goal_column = None;
             }
         }
         MoveLeft | MoveRight | MoveUp | MoveDown | MoveHome | MoveEnd | MoveDocStart
         | MoveDocEnd | MovePageUp(_) | MovePageDown(_) | MoveWordLeft | MoveWordRight => {
             h.history.seal();
+            let ids: Vec<usize> = h.selections.all().iter().map(|s| s.id).collect();
+            let primary_id = h.selections.primary().id;
             if !extend {
-                h.selection.anchor = h.selection.head;
-            }
-            match cmd {
-                MoveLeft => {
-                    let o = h.buffer.offset_of(h.selection.head);
-                    h.selection.head = h.buffer.point_of(o.saturating_sub(1));
+                // Non-extend motion keeps primary only.
+                let head = h.head();
+                h.selections
+                    .replace_all(&h.buffer, vec![Selection::caret(head)]);
+                let target = motion_target(h, &cmd, head);
+                h.selections.primary_mut().collapse_to(target, SelectionGoal::None);
+                if matches!(cmd, MoveUp | MoveDown | MovePageUp(_) | MovePageDown(_)) {
+                    // keep sticky goal
+                } else {
                     h.goal_column = None;
                 }
-                MoveRight => {
-                    let o = h.buffer.offset_of(h.selection.head);
-                    h.selection.head =
-                        h.buffer.point_of((o + 1).min(h.buffer.len_chars()));
+            } else {
+                for id in ids {
+                    let cur = h
+                        .selections
+                        .all()
+                        .into_iter()
+                        .find(|s| s.id == id)
+                        .map(|s| s.head())
+                        .unwrap_or_else(|| h.head());
+                    let target = motion_target(h, &cmd, cur);
+                    if let Some(slot) = h.selections.iter_mut().find(|s| s.id == id) {
+                        slot.set_head(target, SelectionGoal::None);
+                    }
+                }
+                let _ = primary_id;
+                if !matches!(cmd, MoveUp | MoveDown | MovePageUp(_) | MovePageDown(_)) {
                     h.goal_column = None;
                 }
-                MoveWordLeft => {
-                    let o = h.buffer.offset_of(h.selection.head);
-                    h.selection.head = h.buffer.point_of(word_start_before(h, o));
-                    h.goal_column = None;
-                }
-                MoveWordRight => {
-                    let o = h.buffer.offset_of(h.selection.head);
-                    h.selection.head = h.buffer.point_of(word_end_after(h, o));
-                    h.goal_column = None;
-                }
-                MoveUp => move_vert(h, -1),
-                MoveDown => move_vert(h, 1),
-                MovePageUp(n) => move_vert(h, -(n as isize)),
-                MovePageDown(n) => move_vert(h, n as isize),
-                MoveHome => {
-                    h.selection.head.column = 0;
-                    h.goal_column = None;
-                }
-                MoveEnd => {
-                    h.selection.head.column = h.buffer.line_len(h.selection.head.row);
-                    h.goal_column = None;
-                }
-                MoveDocStart => {
-                    h.selection.head = Point::default();
-                    h.goal_column = None;
-                }
-                MoveDocEnd => {
-                    h.selection.head = h.buffer.point_of(h.buffer.len_chars());
-                    h.goal_column = None;
-                }
-                _ => {}
-            }
-            if !extend {
-                h.selection.anchor = h.selection.head;
             }
         }
         DeleteWordLeft => {
-            if !h.selection.is_empty() {
+            if h.selections.all().iter().any(|s| !s.is_empty()) {
                 replace_sel(h, "", "delete-word");
             } else {
-                let off = h.buffer.offset_of(h.selection.head);
+                let head = h.head();
+                let off = h.buffer.offset_of(head);
                 let start = word_start_before(h, off);
                 if start == off {
                     return false;
@@ -303,10 +298,11 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
             }
         }
         DeleteWordRight => {
-            if !h.selection.is_empty() {
+            if h.selections.all().iter().any(|s| !s.is_empty()) {
                 replace_sel(h, "", "delete-word");
             } else {
-                let off = h.buffer.offset_of(h.selection.head);
+                let head = h.head();
+                let off = h.buffer.offset_of(head);
                 let end = word_end_after(h, off);
                 if end == off {
                     return false;
@@ -322,19 +318,23 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
         }
         SelectAll => {
             h.history.seal();
-            h.selection.anchor = Point::default();
-            h.selection.head = h.buffer.point_of(h.buffer.len_chars());
+            let end = h.buffer.point_of(h.buffer.len_chars());
+            let mut sel = Selection::caret(Point::default());
+            sel.set_head(end, SelectionGoal::None);
+            h.selections.replace_all(&h.buffer, vec![sel]);
         }
         Undo => {
             if let Some(c) = h.history.undo(&mut h.buffer) {
-                h.selection = Selection::caret(c);
+                h.selections
+                    .replace_all(&h.buffer, vec![Selection::caret(c)]);
             } else {
                 return false;
             }
         }
         Redo => {
             if let Some(c) = h.history.redo(&mut h.buffer) {
-                h.selection = Selection::caret(c);
+                h.selections
+                    .replace_all(&h.buffer, vec![Selection::caret(c)]);
             } else {
                 return false;
             }
@@ -346,26 +346,43 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
 }
 
 fn replace_sel(h: &mut BufferHandle, s: &str, label: &'static str) {
-    h.history.begin(label, h.selection.head);
-    let (a, b) = h.selection.range_offsets(&h.buffer);
-    if a != b {
+    let primary = h.selections.primary();
+    h.history.begin(label, primary.head());
+    // Delete every non-empty selection range, highest offsets first so
+    // earlier offsets stay valid.
+    let mut ranges = h.selections.ranges(&h.buffer);
+    ranges.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut caret_at: Option<usize> = None;
+    for (a, b) in ranges {
+        if a == b {
+            caret_at = Some(a);
+            continue;
+        }
         let text = h.buffer.slice_chars(a, b);
         h.history
             .apply(&mut h.buffer, Edit::Delete { at: a, text });
-        h.selection = Selection::caret(h.buffer.point_of(a));
+        caret_at = Some(a);
     }
+    let base = caret_at.unwrap_or_else(|| h.buffer.offset_of(primary.head()));
     if !s.is_empty() {
-        let at = h.buffer.offset_of(h.selection.head);
+        // Insert at primary caret only (multi-cursor insert fans out later).
         h.history.apply(
             &mut h.buffer,
             Edit::Insert {
-                at,
+                at: base,
                 text: s.to_string(),
             },
         );
-        h.selection = Selection::caret(h.buffer.point_of(at + s.chars().count()));
+        let np = h.buffer.point_of(base + s.chars().count());
+        h.selections
+            .replace_all(&h.buffer, vec![Selection::caret(np)]);
+        h.history.commit(np);
+    } else {
+        let np = h.buffer.point_of(base);
+        h.selections
+            .replace_all(&h.buffer, vec![Selection::caret(np)]);
+        h.history.commit(np);
     }
-    h.history.commit(h.selection.head);
     h.goal_column = None;
 }
 
@@ -373,13 +390,64 @@ fn delete_range(h: &mut BufferHandle, start: usize, end: usize, label: &'static 
     if start == end {
         return;
     }
-    h.history.begin(label, h.selection.head);
+    let head = h.head();
+    h.history.begin(label, head);
     let text = h.buffer.slice_chars(start, end);
     h.history
         .apply(&mut h.buffer, Edit::Delete { at: start, text });
-    h.selection = Selection::caret(h.buffer.point_of(start));
-    h.history.commit(h.selection.head);
+    let np = h.buffer.point_of(start);
+    h.selections
+        .replace_all(&h.buffer, vec![Selection::caret(np)]);
+    h.history.commit(np);
     h.goal_column = None;
+}
+
+fn motion_target(h: &BufferHandle, cmd: &Cmd, from: Point) -> Point {
+    match cmd {
+        Cmd::MoveLeft => {
+            let o = h.buffer.offset_of(from);
+            h.buffer.point_of(o.saturating_sub(1))
+        }
+        Cmd::MoveRight => {
+            let o = h.buffer.offset_of(from);
+            h.buffer.point_of((o + 1).min(h.buffer.len_chars()))
+        }
+        Cmd::MoveWordLeft => {
+            let o = h.buffer.offset_of(from);
+            h.buffer.point_of(word_start_before(h, o))
+        }
+        Cmd::MoveWordRight => {
+            let o = h.buffer.offset_of(from);
+            h.buffer.point_of(word_end_after(h, o))
+        }
+        Cmd::MoveUp | Cmd::MoveDown | Cmd::MovePageUp(_) | Cmd::MovePageDown(_) => {
+            let delta: isize = match cmd {
+                Cmd::MoveUp => -1,
+                Cmd::MoveDown => 1,
+                Cmd::MovePageUp(n) => -(*n as isize),
+                Cmd::MovePageDown(n) => *n as isize,
+                _ => 0,
+            };
+            let goal = h.goal_column.unwrap_or(from.column);
+            let max = h.buffer.len_lines().saturating_sub(1) as isize;
+            let row = (from.row as isize + delta).clamp(0, max) as usize;
+            Point {
+                row,
+                column: goal.min(h.buffer.line_len(row)),
+            }
+        }
+        Cmd::MoveHome => Point {
+            row: from.row,
+            column: 0,
+        },
+        Cmd::MoveEnd => Point {
+            row: from.row,
+            column: h.buffer.line_len(from.row),
+        },
+        Cmd::MoveDocStart => Point::default(),
+        Cmd::MoveDocEnd => h.buffer.point_of(h.buffer.len_chars()),
+        _ => from,
+    }
 }
 
 fn is_word_char(c: char) -> bool {
@@ -464,17 +532,11 @@ fn word_end_after(h: &BufferHandle, off: usize) -> usize {
     off + i
 }
 
-fn move_vert(h: &mut BufferHandle, delta: isize) {
-    let goal = *h.goal_column.get_or_insert(h.selection.head.column);
-    let max = h.buffer.len_lines().saturating_sub(1) as isize;
-    let row = (h.selection.head.row as isize + delta).clamp(0, max) as usize;
-    h.selection.head = Point {
-        row,
-        column: goal.min(h.buffer.line_len(row)),
-    };
+fn clamp_point(buf: &Buffer, p: Point) -> Point {
+    clamp_point_pub(buf, p)
 }
 
-fn clamp_point(buf: &Buffer, p: Point) -> Point {
+pub fn clamp_point_pub(buf: &Buffer, p: Point) -> Point {
     let row = p.row.min(buf.len_lines().saturating_sub(1));
     Point {
         row,
@@ -484,7 +546,7 @@ fn clamp_point(buf: &Buffer, p: Point) -> Point {
 
 fn ensure_visible(h: &mut BufferHandle, vis: usize) {
     let vis = vis.max(1);
-    let row = h.selection.head.row;
+    let row = h.head().row;
     if row < h.scroll_row {
         h.scroll_row = row;
     } else if row >= h.scroll_row + vis {
@@ -524,13 +586,13 @@ mod tests {
         ws.exec(Cmd::MoveDocEnd, false);
         // caret at end → Ctrl+Left lands on "foo" start (13)
         ws.exec(Cmd::MoveWordLeft, false);
-        assert_eq!(ws.active().unwrap().selection.head.column, 13);
+        assert_eq!(ws.active().unwrap().head().column, 13);
         // again → "world" start (6)
         ws.exec(Cmd::MoveWordLeft, false);
-        assert_eq!(ws.active().unwrap().selection.head.column, 6);
+        assert_eq!(ws.active().unwrap().head().column, 6);
         // Ctrl+Right from 6 → end of "world" (11)
         ws.exec(Cmd::MoveWordRight, false);
-        assert_eq!(ws.active().unwrap().selection.head.column, 11);
+        assert_eq!(ws.active().unwrap().head().column, 11);
         // Ctrl+Backspace deletes "world"
         ws.exec(Cmd::DeleteWordLeft, false);
         assert_eq!(ws.active().unwrap().buffer.line(0), "hello   foo");
@@ -548,5 +610,85 @@ mod tests {
         ws.exec(Cmd::Cut, false);
         // Cut with empty selection is a no-op returning false internally.
         assert_eq!(ws.active().unwrap().buffer.line(0), "abc");
+    }
+
+    #[test]
+    fn selections_merge_on_overlap() {
+        use crate::selection::{Selection, Selections};
+        let buf = Buffer::from_str("hello world");
+        let mut sels = Selections::default();
+        let a = Selection {
+            id: 100,
+            start: Point { row: 0, column: 0 },
+            end: Point { row: 0, column: 5 },
+            reversed: false,
+            goal: crate::selection::SelectionGoal::None,
+        };
+        let b = Selection {
+            id: 101,
+            start: Point { row: 0, column: 3 },
+            end: Point { row: 0, column: 8 },
+            reversed: false,
+            goal: crate::selection::SelectionGoal::None,
+        };
+        sels.replace_all(&buf, vec![a]);
+        assert_eq!(sels.count(), 1);
+        sels.add(&buf, b);
+        assert_eq!(sels.count(), 1);
+        assert_eq!(sels.primary().range_offsets(&buf), (0, 8));
+    }
+
+    #[test]
+    fn cursor_at_boundary_merges() {
+        use crate::selection::{Selection, Selections};
+        let buf = Buffer::from_str("hello world");
+        let mut sels = Selections::default();
+        let range = Selection {
+            id: 100,
+            start: Point { row: 0, column: 0 },
+            end: Point { row: 0, column: 5 },
+            reversed: false,
+            goal: crate::selection::SelectionGoal::None,
+        };
+        sels.replace_all(&buf, vec![range]);
+        sels.add(
+            &buf,
+            Selection::caret(Point { row: 0, column: 5 }),
+        );
+        assert_eq!(sels.count(), 1);
+    }
+
+    #[test]
+    fn disjoint_cursors_stay_separate() {
+        use crate::selection::{Selection, Selections};
+        let buf = Buffer::from_str("hello world");
+        let mut sels = Selections::default();
+        sels.replace_all(
+            &buf,
+            vec![
+                Selection::caret(Point { row: 0, column: 0 }),
+                Selection::caret(Point { row: 0, column: 6 }),
+            ],
+        );
+        assert_eq!(sels.count(), 2);
+    }
+
+    #[test]
+    fn reversed_head_tail() {
+        use crate::selection::Selection;
+        let mut s = Selection::caret(Point { row: 0, column: 5 });
+        s.set_head(
+            Point { row: 0, column: 2 },
+            crate::selection::SelectionGoal::None,
+        );
+        assert!(s.reversed);
+        assert_eq!(s.head(), Point { row: 0, column: 2 });
+        assert_eq!(s.tail(), Point { row: 0, column: 5 });
+        s.set_head(
+            Point { row: 0, column: 7 },
+            crate::selection::SelectionGoal::None,
+        );
+        assert!(!s.reversed);
+        assert_eq!(s.head(), Point { row: 0, column: 7 });
     }
 }

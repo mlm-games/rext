@@ -11,4 +11,4 @@ pub use buffer::{Buffer, BufferId, Point};
 pub use display_map::{DisplayMap, DisplayPoint, SoftWrap};
 pub use history::{Edit, History};
 pub use selection::Selection;
-pub use workspace::{BufferHandle, Cmd, Workspace};
+pub use workspace::{BufferHandle, Cmd, Workspace, clamp_point_pub};

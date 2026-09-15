@@ -12,11 +12,14 @@ pub fn StatusBar(session: SessionRef, height: f32) -> View {
             h.map(|x| x.buffer.title()).unwrap_or_default(),
             h.map(|x| x.buffer.dirty()).unwrap_or(false),
             ws.status.clone(),
-            h.map(|x| x.selection.head).unwrap_or_default(),
+            h.map(|x| x.head()).unwrap_or_default(),
             h.map(|x| x.buffer.len_lines()).unwrap_or(0),
             h.map(|x| {
-                let (a, b) = x.selection.range_offsets(&x.buffer);
-                b - a
+                x.selections
+                    .ranges(&x.buffer)
+                    .into_iter()
+                    .map(|(a, b)| b - a)
+                    .sum()
             })
             .unwrap_or(0),
             h.map(|x| x.history.can_undo()).unwrap_or(false),

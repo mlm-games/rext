@@ -88,13 +88,17 @@ pub fn EditorSurface(session: SessionRef) -> View {
                 }
                 drag_flag.set(true);
                 let p = hit_down(ev.position.x, ev.position.y);
-                s_down.dispatch(
-                    Cmd::SetCaret {
-                        point: p,
-                        extend: ev.modifiers.shift,
-                    },
-                    false,
-                );
+                if ev.modifiers.alt {
+                    s_down.add_cursor(p);
+                } else {
+                    s_down.dispatch(
+                        Cmd::SetCaret {
+                            point: p,
+                            extend: ev.modifiers.shift,
+                        },
+                        false,
+                    );
+                }
                 ev.consume();
             })
             .on_pointer_move(move |ev: PointerEvent| {
@@ -212,9 +216,16 @@ fn paint(
         Px(0.0),
     );
 
-    let (sel_a, sel_b) = ed.selection.range_offsets(buf);
-    let caret = ed.selection.head;
+    let sel_ranges = ed.selections.ranges(buf);
+    let primary = ed.selections.primary();
+    let caret = primary.head();
     let caret_dp = ed.display.point_to_display(buf, caret);
+    let caret_rows: Vec<usize> = ed
+        .selections
+        .all()
+        .iter()
+        .map(|s| s.head().row)
+        .collect();
 
     for row in first..last {
         let y = (row - first) as f32 * LINE_H;
@@ -233,12 +244,15 @@ fn paint(
             );
         }
 
-        // selection
-        if sel_a != sel_b {
+        // selections (all cursors)
+        for (sel_a, sel_b) in &sel_ranges {
+            if sel_a == sel_b {
+                continue;
+            }
             let ls = buf.offset_of(Point { row, column: 0 });
             let le = ls + buf.line_len(row);
-            let s = sel_a.max(ls);
-            let en = sel_b.min(le);
+            let s = (*sel_a).max(ls);
+            let en = (*sel_b).min(le);
             if s < en {
                 let m = cache.metrics(buf.version(), row, &display, FONT_PX);
                 let col0 = buf.point_of(s).column;
@@ -275,7 +289,7 @@ fn paint(
                 x: nx,
                 y: y + baseline,
             },
-            if row == caret.row {
+            if caret_rows.contains(&row) {
                 chrome.gutter_fg_active
             } else {
                 chrome.gutter_fg
@@ -300,12 +314,28 @@ fn paint(
         }
     }
 
-    // caret
-    if caret_dp.row >= first && caret_dp.row < last {
-        let y = (caret_dp.row - first) as f32 * LINE_H;
-        let display = ed.display.display_line(buf, caret_dp.row);
-        let m = cache.metrics(buf.version(), caret_dp.row, &display, FONT_PX);
-        let cx = text_x + LineMetricsCache::x_for_col(m, caret_dp.column);
+    // carets (all cursors; primary last so it paints on top)
+    let mut carets: Vec<_> = ed
+        .selections
+        .all()
+        .iter()
+        .map(|s| ed.display.point_to_display(buf, s.head()))
+        .collect();
+    carets.sort_by_key(|dp| {
+        if dp.row == caret_dp.row && dp.column == caret_dp.column {
+            1
+        } else {
+            0
+        }
+    });
+    for cdp in carets {
+        if cdp.row < first || cdp.row >= last {
+            continue;
+        }
+        let y = (cdp.row - first) as f32 * LINE_H;
+        let display = ed.display.display_line(buf, cdp.row);
+        let m = cache.metrics(buf.version(), cdp.row, &display, FONT_PX);
+        let cx = text_x + LineMetricsCache::x_for_col(m, cdp.column);
         scope.draw_rect(
             Rect {
                 x: cx,

@@ -57,30 +57,54 @@ impl Session {
         };
         match cmd {
             Cmd::Copy => {
-                let (a, b) = h.selection.range_offsets(&h.buffer);
-                if a == b {
+                let ranges = h.selections.ranges(&h.buffer);
+                let non_empty: Vec<(usize, usize)> =
+                    ranges.into_iter().filter(|(a, b)| a != b).collect();
+                if non_empty.is_empty() {
                     ws.status = "nothing selected".into();
                     return true; // status changed → recompose
                 }
-                let text = h.buffer.slice_chars(a, b);
+                let text = non_empty
+                    .iter()
+                    .map(|(a, b)| h.buffer.slice_chars(*a, *b))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 repose_core::clipboard::copy_to_clipboard(&text);
                 repose_core::clipboard::set_primary_selection(&text);
-                ws.status = format!("copied {} chars", text.chars().count());
+                ws.status = format!(
+                    "copied {} chars ({} selections)",
+                    text.chars().count(),
+                    non_empty.len()
+                );
                 true
             }
             Cmd::Cut => {
-                let (a, b) = h.selection.range_offsets(&h.buffer);
-                if a == b {
+                let ranges = h.selections.ranges(&h.buffer);
+                let non_empty: Vec<(usize, usize)> =
+                    ranges.into_iter().filter(|(a, b)| a != b).collect();
+                if non_empty.is_empty() {
                     return false;
                 }
-                let text = h.buffer.slice_chars(a, b);
+                let text = non_empty
+                    .iter()
+                    .map(|(a, b)| h.buffer.slice_chars(*a, *b))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 repose_core::clipboard::copy_to_clipboard(&text);
                 repose_core::clipboard::set_primary_selection(&text);
-                h.history.begin("cut", h.selection.head);
-                h.history
-                    .apply(&mut h.buffer, Edit::Delete { at: a, text });
-                h.selection = Selection::caret(h.buffer.point_of(a));
-                h.history.commit(h.selection.head);
+                let head = h.head();
+                h.history.begin("cut", head);
+                let mut sorted = non_empty;
+                sorted.sort_by(|a, b| b.0.cmp(&a.0));
+                let min_start = sorted.iter().map(|(a, _)| *a).min().unwrap_or(0);
+                for (a, b) in sorted {
+                    let t = h.buffer.slice_chars(a, b);
+                    h.history.apply(&mut h.buffer, Edit::Delete { at: a, text: t });
+                }
+                let np = h.buffer.point_of(min_start);
+                h.selections
+                    .replace_all(&h.buffer, vec![Selection::caret(np)]);
+                h.history.commit(np);
                 h.goal_column = None;
                 ws.status = "cut".into();
                 true
@@ -110,6 +134,20 @@ impl Session {
                 self.bump();
             }
         }
+    }
+
+    pub fn add_cursor(&self, point: rext_core::Point) {
+        use rext_core::{Selection, clamp_point_pub};
+        let mut ws = self.ws.borrow_mut();
+        let Some(h) = ws.active_mut() else {
+            return;
+        };
+        h.history.seal();
+        let point = clamp_point_pub(&h.buffer, point);
+        h.selections.add(&h.buffer, Selection::caret(point));
+        h.goal_column = None;
+        drop(ws);
+        self.bump();
     }
 
     pub fn toggle_dir(&self, idx: usize) {
