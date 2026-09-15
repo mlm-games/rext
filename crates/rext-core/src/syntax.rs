@@ -238,33 +238,24 @@ fn python_config() -> HighlightConfiguration {
 }
 
 fn paired_brackets(node: &tree_sitter::Node, text: &str) -> Option<(Range<usize>, Range<usize>)> {
-    let kind = node.kind();
     let _ = text;
     // Direct bracket children (arguments, block, array, …).
     if let Some(pair) = direct_brackets(node) {
         return Some(pair);
     }
-    // Wrapper nodes (call_expression, if_statement, …): look one level down
-    // for the first bracket-holding child.
+    // Wrapper nodes (call_expression, macro_invocation, struct literals,
+    // conditions, …): look one level down for the first bracket-holding
+    // child. Generic over node kinds — the bracket characters themselves
+    // are the source of truth, not an allowlist.
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if !child.is_named() {
             continue;
         }
-        match child.kind() {
-            "arguments" | "parameters" | "tuple_expression" | "tuple_pattern" | "tuple_type"
-            | "array" | "array_expression" | "array_pattern" | "block" | "declaration_list"
-            | "dictionary" | "list" | "set" | "tuple" | "parameters_list" | "argument_list"
-            | "parenthesized_expression" | "subscript_expression" | "subscript"
-            | "condition" | "alternative" | "consequence" => {
-                if let Some(pair) = direct_brackets(&child) {
-                    return Some(pair);
-                }
-            }
-            _ => {}
+        if let Some(pair) = direct_brackets(&child) {
+            return Some(pair);
         }
     }
-    let _ = kind;
     None
 }
 
@@ -311,6 +302,31 @@ mod tests {
         assert!(has(Scope::String, "\"hi\"", src));
         assert!(has(Scope::Comment, "// c", src));
         assert!(has(Scope::Function, "main", src));
+    }
+
+    #[test]
+    fn enclosing_brackets_macro_parens() {
+        let reg = SyntaxRegistry::new();
+        let src = "fn f() {\n    format!(\"hi\");\n}\n";
+        let off = src.find("format").unwrap() + 7;
+        let pair = reg.enclosing_brackets("rust", src, off);
+        assert!(pair.is_some());
+        let (open, close) = pair.unwrap();
+        assert_eq!(&src[open.clone()], "(");
+        assert_eq!(&src[close.clone()], ")");
+        // The pair must be the macro's parens, not the fn body braces.
+        assert!(src[open.start..close.end].contains("\"hi\""));
+    }
+
+    #[test]
+    fn enclosing_brackets_nested() {
+        let reg = SyntaxRegistry::new();
+        let src = "fn f() {\n    foo(bar(1));\n}\n";
+        let off = src.find("bar").unwrap() + 1;
+        let pair = reg.enclosing_brackets("rust", src, off);
+        assert!(pair.is_some());
+        let (open, close) = pair.unwrap();
+        assert_eq!(&src[open.start..close.end], "(1)");
     }
 
     #[test]
