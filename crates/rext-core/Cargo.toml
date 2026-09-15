@@ -15,3 +15,7 @@ serde_json.workspace = true
 imara-diff.workspace = true
 aho-corasick.workspace = true
 regex.workspace = true
+tree-sitter.workspace = true
+tree-sitter-highlight.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-json.workspace = true
