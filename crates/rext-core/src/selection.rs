@@ -228,6 +228,20 @@ impl Selections {
         }
     }
 
+    pub fn replace_all_no_merge(&mut self, sels: Vec<Selection>) {
+        self.disjoint = sels;
+        self.pending = None;
+        if self.disjoint.is_empty() {
+            self.disjoint.push(Selection::default());
+        }
+    }
+
+    pub fn replace_all_sorted(&mut self, buf: &Buffer, sels: Vec<Selection>) {
+        let mut sels = sels;
+        sels.sort_by_key(|s| buf.offset_of(s.start));
+        self.replace_all_no_merge(sels);
+    }
+
     pub fn collapse_all(&mut self) {
         for s in &mut self.disjoint {
             let h = s.head();

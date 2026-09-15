@@ -60,6 +60,9 @@ pub enum Cmd {
     MoveWordRight,
     DeleteWordLeft,
     DeleteWordRight,
+    ExpandSnippet(String),
+    NextTabstop,
+    PrevTabstop,
     Undo,
     Redo,
     Save,
@@ -323,6 +326,12 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
             sel.set_head(end, SelectionGoal::None);
             h.selections.replace_all(&h.buffer, vec![sel]);
         }
+        ExpandSnippet(source) => {
+            expand_snippet(h, &source);
+        }
+        NextTabstop | PrevTabstop => {
+            cycle_tabstop(h, matches!(cmd, NextTabstop));
+        }
         Undo => {
             if let Some(c) = h.history.undo(&mut h.buffer) {
                 h.selections
@@ -400,6 +409,73 @@ fn delete_range(h: &mut BufferHandle, start: usize, end: usize, label: &'static 
         .replace_all(&h.buffer, vec![Selection::caret(np)]);
     h.history.commit(np);
     h.goal_column = None;
+}
+
+fn expand_snippet(h: &mut BufferHandle, source: &str) {
+    use crate::snippet::Snippet;
+    let Ok(snippet) = Snippet::parse(source) else {
+        return;
+    };
+    let primary = h.selections.primary();
+    h.history.begin("snippet", primary.head());
+    let (a, b) = primary.range_offsets(&h.buffer);
+    if a != b {
+        let text = h.buffer.slice_chars(a, b);
+        h.history
+            .apply(&mut h.buffer, Edit::Delete { at: a, text });
+    }
+    let at = a.min(b);
+    h.history.apply(
+        &mut h.buffer,
+        Edit::Insert {
+            at,
+            text: snippet.text.clone(),
+        },
+    );
+    let tab_sels: Vec<Selection> = snippet
+        .tabstops
+        .iter()
+        .filter_map(|ts| {
+            ts.ranges.first().map(|r| {
+                let s = h.buffer.point_of(at + r.start.max(0) as usize);
+                let e = h.buffer.point_of(at + r.end.max(0) as usize);
+                let mut sel = Selection::caret(s);
+                sel.set_head(e, SelectionGoal::None);
+                sel
+            })
+        })
+        .collect();
+    if tab_sels.is_empty() {
+        let np = h.buffer.point_of(at + snippet.text.chars().count());
+        h.selections
+            .replace_all(&h.buffer, vec![Selection::caret(np)]);
+        h.history.commit(np);
+    } else {
+        // Tab order [$1, $2, …, $0]; primary() is disjoint.last(), so rotate
+        // left once: [$2, …, $0, $1] puts $1 last = primary.
+        let mut ordered = tab_sels;
+        ordered.rotate_left(1);
+        let first_head = ordered.last().map(|s| s.head()).unwrap();
+        h.selections.replace_all_no_merge(ordered);
+        h.history.commit(first_head);
+    }
+    h.goal_column = None;
+}
+
+fn cycle_tabstop(h: &mut BufferHandle, forward: bool) {
+    let all = h.selections.all();
+    if all.len() < 2 {
+        return;
+    }
+    // Primary is last; forward Tab rotates left ($2 becomes primary),
+    // backward rotates right. Wraps naturally.
+    let mut ordered = all;
+    if forward {
+        ordered.rotate_left(1);
+    } else {
+        ordered.rotate_right(1);
+    }
+    h.selections.replace_all_no_merge(ordered);
 }
 
 fn motion_target(h: &BufferHandle, cmd: &Cmd, from: Point) -> Point {
@@ -610,6 +686,26 @@ mod tests {
         ws.exec(Cmd::Cut, false);
         // Cut with empty selection is a no-op returning false internally.
         assert_eq!(ws.active().unwrap().buffer.line(0), "abc");
+    }
+
+    #[test]
+    fn snippet_expand_and_tab_cycle() {
+        let mut ws = ws_with("");
+        ws.exec(Cmd::ExpandSnippet("fn $1($2) {\n\t$0\n}".into()), false);
+        let h = ws.active().unwrap();
+        assert_eq!(h.buffer.line(0), "fn () {");
+        assert_eq!(h.selections.count(), 3);
+        let first = h.selections.primary().head();
+        assert_eq!(first, Point { row: 0, column: 3 });
+        ws.exec(Cmd::NextTabstop, false);
+        let h = ws.active().unwrap();
+        let primary = h.selections.primary();
+        assert_eq!(primary.head(), Point { row: 0, column: 4 });
+        ws.exec(Cmd::NextTabstop, false);
+        let h = ws.active().unwrap();
+        let primary = h.selections.primary();
+        assert_eq!(primary.head(), Point { row: 1, column: 1 });
+        let _ = first;
     }
 
     #[test]
