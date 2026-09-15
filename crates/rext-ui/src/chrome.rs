@@ -24,6 +24,8 @@ pub struct EditorChrome {
     pub syn_variable: Color,
     pub syn_operator: Color,
     pub syn_property: Color,
+    pub indent_guide: Color,
+    pub indent_guide_active: Color,
 }
 
 pub fn zed_chrome() -> EditorChrome {
@@ -49,6 +51,8 @@ pub fn zed_chrome() -> EditorChrome {
         syn_variable: Color::from_rgb(0xAB, 0xB2, 0xBF),
         syn_operator: Color::from_rgb(0x56, 0xB6, 0xC2),
         syn_property: Color::from_rgb(0xE0, 0x6C, 0x75),
+        indent_guide: Color::from_rgb(0x3E, 0x44, 0x50),
+        indent_guide_active: Color::from_rgb(0x52, 0x8B, 0xFF),
     }
 }
 

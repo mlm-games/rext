@@ -330,6 +330,11 @@ fn paint(
                             .point_to_display(buf, Point { row, column: col.min(buf.line_len(row)) })
                             .column;
                         let dx = text_x + LineMetricsCache::x_for_col(m, dcol);
+                        let active = caret.row == row
+                            || ed.selections.all().iter().any(|sl| {
+                                let h = sl.head();
+                                h.row == row || sl.tail().row == row
+                            });
                         scope.draw_rect(
                             Rect {
                                 x: dx,
@@ -337,7 +342,11 @@ fn paint(
                                 w: 1.0,
                                 h: LINE_H,
                             },
-                            chrome.border,
+                            if active {
+                                chrome.indent_guide_active
+                            } else {
+                                chrome.indent_guide
+                            },
                             Px(0.0),
                         );
                     }
