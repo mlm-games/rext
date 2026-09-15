@@ -14,6 +14,7 @@ pub const PANEL_FILES: PanelId = 1;
 pub const PANEL_EDITOR: PanelId = 2;
 pub const PANEL_PROBLEMS: PanelId = 3;
 pub const PANEL_TERMINAL: PanelId = 4;
+pub const PANEL_SEARCH: PanelId = 5;
 
 fn default_dock() -> DockState {
     let root = DockNode {
@@ -43,7 +44,7 @@ fn default_dock() -> DockState {
                     b: Box::new(DockNode {
                         id: 5,
                         kind: DockKind::Tabs {
-                            tabs: vec![PANEL_PROBLEMS, PANEL_TERMINAL],
+                            tabs: vec![PANEL_PROBLEMS, PANEL_TERMINAL, PANEL_SEARCH],
                             active: Some(PANEL_TERMINAL),
                         },
                     }),
@@ -63,6 +64,7 @@ pub fn EditorShell(session: SessionRef) -> View {
     let s_ed = session.clone();
     let sess_prob = session.clone();
     let sess_term = session.clone();
+    let sess_search = session.clone();
     let panels = vec![
         DockPanel {
             id: PANEL_FILES,
@@ -83,6 +85,11 @@ pub fn EditorShell(session: SessionRef) -> View {
             id: PANEL_TERMINAL,
             title: "Terminal".into(),
             content: Rc::new(move || panels::terminal::TerminalPanel(sess_term.clone())),
+        },
+        DockPanel {
+            id: PANEL_SEARCH,
+            title: "Search".into(),
+            content: Rc::new(move || panels::search_panel::SearchPanel(sess_search.clone())),
         },
     ];
 
