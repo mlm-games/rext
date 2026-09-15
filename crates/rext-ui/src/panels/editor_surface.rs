@@ -435,18 +435,16 @@ fn paint(
         }
 
         if !display.is_empty() {
-            // Code text: JetBrains Mono via font-awl `monospace` feature.
-            // Same family as the metrics cache so caret/selection agree
-            // with the painted glyphs.
-            scope.draw_text_with_family(
-                display,
-                Vec2 {
-                    x: text_x,
-                    y: y + baseline,
-                },
-                chrome.text,
-                Px(FONT_PX),
-                CODE_FAMILY,
+            paint_spans(
+                scope,
+                session,
+                buf,
+                row,
+                &display,
+                text_x,
+                y + baseline,
+                chrome,
+                cache,
             );
         }
     }
@@ -495,4 +493,140 @@ fn paint(
         chrome.border,
         Px(0.0),
     );
+}
+
+fn scope_color(chrome: &crate::chrome::EditorChrome, scope: rext_core::Scope) -> Color {
+    match scope {
+        rext_core::Scope::Keyword => chrome.syn_keyword,
+        rext_core::Scope::String => chrome.syn_string,
+        rext_core::Scope::Comment => chrome.syn_comment,
+        rext_core::Scope::Number => chrome.syn_number,
+        rext_core::Scope::Type => chrome.syn_type,
+        rext_core::Scope::Function => chrome.syn_function,
+        rext_core::Scope::Variable => chrome.syn_variable,
+        rext_core::Scope::Operator => chrome.syn_operator,
+        rext_core::Scope::Property => chrome.syn_property,
+        rext_core::Scope::Punctuation => chrome.text,
+    }
+}
+
+fn paint_spans(
+    scope: &mut DrawScope,
+    session: &SessionRef,
+    buf: &rext_core::Buffer,
+    row: usize,
+    display: &str,
+    text_x: f32,
+    baseline_y: f32,
+    chrome: &crate::chrome::EditorChrome,
+    cache: &mut LineMetricsCache,
+) {
+    let Some(id) = session.ws.borrow().active_id() else {
+        return;
+    };
+    let lang = session
+        .ws
+        .borrow()
+        .active()
+        .and_then(|h| h.buffer.path())
+        .and_then(|p| session.syntax.language_for_path(p));
+    let full_text: String = (0..buf.len_lines()).map(|r| buf.line(r)).collect::<Vec<_>>().join("\n");
+    let spans = session.highlight_spans(id, buf.version(), lang, &full_text);
+    let byte_to_char: Vec<usize> = {
+        let mut map = vec![0usize; full_text.len() + 1];
+        for (ci, (bi, _)) in full_text.char_indices().enumerate() {
+            map[bi] = ci;
+        }
+        map[full_text.len()] = full_text.chars().count();
+        let mut last = 0;
+        for v in map.iter_mut() {
+            if *v == 0 {
+                *v = last;
+            } else {
+                last = *v;
+            }
+        }
+        map
+    };
+    let m = cache.metrics(buf.version(), row, display, FONT_PX);
+
+    // Collect (char_range, color) pieces intersecting this line.
+    let mut pieces: Vec<(std::ops::Range<usize>, Color)> = Vec::new();
+    for (byte_range, hl_scope) in &spans {
+        let n = byte_to_char.len() - 1;
+        let s_byte = byte_to_char[byte_range.start.min(n)];
+        let e_byte = byte_to_char[byte_range.end.min(n)];
+        let ls = buf.offset_of(rext_core::Point { row, column: 0 });
+        let le = ls + buf.line_len(row);
+        let s = s_byte.max(ls);
+        let e = e_byte.min(le);
+        if s >= e {
+            continue;
+        }
+        let cs = buf.point_of(s).column;
+        let ce = buf.point_of(e).column;
+        pieces.push((cs..ce, scope_color(chrome, *hl_scope)));
+    }
+    pieces.sort_by_key(|(r, _)| r.start);
+
+    if pieces.is_empty() {
+        scope.draw_text_with_family(
+            display,
+            Vec2 { x: text_x, y: baseline_y },
+            chrome.text,
+            Px(FONT_PX),
+            CODE_FAMILY,
+        );
+        return;
+    }
+
+    // Fill gaps with default color, draw each piece via display-col mapping.
+    let mut cursor = 0usize;
+    let n_chars = display.chars().count();
+    let draw_piece = |scope: &mut DrawScope, cs: usize, ce: usize, color: Color| {
+        if cs >= ce || cs >= n_chars {
+            return;
+        }
+        let ce = ce.min(n_chars);
+        let text: String = display.chars().skip(cs).take(ce - cs).collect();
+        if text.is_empty() {
+            return;
+        }
+        let d0 = ed_display_col(buf, row, cs);
+        let x0 = text_x + LineMetricsCache::x_for_col(m, d0);
+        scope.draw_text_with_family(
+            text,
+            Vec2 { x: x0, y: baseline_y },
+            color,
+            Px(FONT_PX),
+            CODE_FAMILY,
+        );
+    };
+    for (r, color) in pieces {
+        if r.start > cursor {
+            draw_piece(scope, cursor, r.start, chrome.text);
+        }
+        draw_piece(scope, r.start, r.end, color);
+        cursor = cursor.max(r.end);
+    }
+    if cursor < n_chars {
+        draw_piece(scope, cursor, n_chars, chrome.text);
+    }
+}
+
+fn ed_display_col(buf: &rext_core::Buffer, row: usize, col: usize) -> usize {
+    // Buffer col → display col (tab expansion). Mirrors DisplayMap.
+    let line = buf.line(row);
+    let mut dcol = 0usize;
+    for (i, ch) in line.chars().enumerate() {
+        if i >= col {
+            break;
+        }
+        if ch == '\t' {
+            dcol += 4 - (dcol % 4);
+        } else {
+            dcol += 1;
+        }
+    }
+    dcol
 }

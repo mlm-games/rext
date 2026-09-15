@@ -15,6 +15,15 @@ pub struct EditorChrome {
     pub diff_added: Color,
     pub diff_modified: Color,
     pub diff_deleted: Color,
+    pub syn_keyword: Color,
+    pub syn_string: Color,
+    pub syn_comment: Color,
+    pub syn_number: Color,
+    pub syn_type: Color,
+    pub syn_function: Color,
+    pub syn_variable: Color,
+    pub syn_operator: Color,
+    pub syn_property: Color,
 }
 
 pub fn zed_chrome() -> EditorChrome {
@@ -31,6 +40,15 @@ pub fn zed_chrome() -> EditorChrome {
         diff_added: Color::from_rgb(0x98, 0xC3, 0x79),
         diff_modified: Color::from_rgb(0xE5, 0xC0, 0x7B),
         diff_deleted: Color::from_rgb(0xE0, 0x6C, 0x75),
+        syn_keyword: Color::from_rgb(0xC6, 0x78, 0xDD),
+        syn_string: Color::from_rgb(0x98, 0xC3, 0x79),
+        syn_comment: Color::from_rgb(0x5C, 0x63, 0x70),
+        syn_number: Color::from_rgb(0xD1, 0x9A, 0x66),
+        syn_type: Color::from_rgb(0xE5, 0xC0, 0x7B),
+        syn_function: Color::from_rgb(0x61, 0xAF, 0xEF),
+        syn_variable: Color::from_rgb(0xAB, 0xB2, 0xBF),
+        syn_operator: Color::from_rgb(0x56, 0xB6, 0xC2),
+        syn_property: Color::from_rgb(0xE0, 0x6C, 0x75),
     }
 }
 

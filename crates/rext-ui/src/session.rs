@@ -1,6 +1,7 @@
-use rext_core::{Cmd, DiagnosticsStore, DiffStore, ResolvedTask, TaskContext, TaskInventory, Workspace};
+use rext_core::{BufferId, Cmd, DiagnosticsStore, DiffStore, ResolvedTask, SyntaxRegistry, TaskContext, TaskInventory, Workspace};
 use repose_core::*;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -20,6 +21,8 @@ pub struct Session {
     pub find_open: Mutable<bool>,
     pub find_query: Mutable<String>,
     pub find_match_idx: Mutable<usize>,
+    pub syntax: SyntaxRegistry,
+    syntax_cache: RefCell<HashMap<BufferId, (u64, Vec<(std::ops::Range<usize>, rext_core::Scope)>)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -334,12 +337,35 @@ pub fn use_session() -> SessionRef {
             find_open: Mutable::new(false),
             find_query: Mutable::new(String::new()),
             find_match_idx: Mutable::new(0usize),
+            syntax: SyntaxRegistry::new(),
+            syntax_cache: RefCell::new(HashMap::new()),
             ws: RefCell::new(Workspace::new(root, initial)),
         }
     })
 }
 
 impl Session {
+    pub fn highlight_spans(
+        &self,
+        id: BufferId,
+        version: u64,
+        lang: Option<&str>,
+        text: &str,
+    ) -> Vec<(std::ops::Range<usize>, rext_core::Scope)> {
+        if let Some((v, spans)) = self.syntax_cache.borrow().get(&id) {
+            if *v == version {
+                return spans.clone();
+            }
+        }
+        let spans = lang
+            .map(|l| self.syntax.highlight(l, text))
+            .unwrap_or_default();
+        self.syntax_cache
+            .borrow_mut()
+            .insert(id, (version, spans.clone()));
+        spans
+    }
+
     pub fn refresh_tasks(&self) {
         let root = self.ws.borrow().root.clone();
         self.tasks.borrow_mut().refresh(&root);
