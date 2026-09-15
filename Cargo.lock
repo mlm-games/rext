@@ -2932,8 +2932,10 @@ dependencies = [
 name = "rext-core"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "imara-diff",
+ "regex",
  "ropey",
  "serde",
  "serde_json",
