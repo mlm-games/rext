@@ -1,4 +1,4 @@
-use rext_core::{Buffer, Cmd, Workspace};
+use rext_core::{Cmd, Workspace};
 use repose_core::*;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -114,10 +114,15 @@ pub fn use_session() -> SessionRef {
             None => (std::env::current_dir().unwrap_or_default(), None),
         };
         let tree = list_dir(&root, 0);
+        // NOTE: plain `Mutable::new` here, NOT `remember_mutable_with_key`:
+        // this closure already runs inside `remember_with_key`'s init, which
+        // holds the composer borrow — a nested remember would panic with
+        // "RefCell already borrowed". The Session itself is remembered, so
+        // these Mutables persist across frames anyway.
         Session {
-            rev: remember_mutable_with_key("rext:rev", || 0u64),
-            palette_open: remember_mutable_with_key("rext:pal", || false),
-            palette_query: remember_mutable_with_key("rext:pq", || String::new()),
+            rev: Mutable::new(0u64),
+            palette_open: Mutable::new(false),
+            palette_query: Mutable::new(String::new()),
             tree: RefCell::new(tree),
             ws: RefCell::new(Workspace::new(root, initial)),
         }
