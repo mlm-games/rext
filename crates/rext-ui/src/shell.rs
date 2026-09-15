@@ -61,6 +61,8 @@ pub fn EditorShell(session: SessionRef) -> View {
 
     let s_files = session.clone();
     let s_ed = session.clone();
+    let sess_prob = session.clone();
+    let sess_term = session.clone();
     let panels = vec![
         DockPanel {
             id: PANEL_FILES,
@@ -75,12 +77,12 @@ pub fn EditorShell(session: SessionRef) -> View {
         DockPanel {
             id: PANEL_PROBLEMS,
             title: "Problems".into(),
-            content: Rc::new(|| panels::placeholder::Placeholder("Diagnostics (LSP phase 4)")),
+            content: Rc::new(move || panels::problems::ProblemsPanel(sess_prob.clone())),
         },
         DockPanel {
             id: PANEL_TERMINAL,
             title: "Terminal".into(),
-            content: Rc::new(|| panels::placeholder::Placeholder("Terminal (portable-pty later)")),
+            content: Rc::new(move || panels::terminal::TerminalPanel(sess_term.clone())),
         },
     ];
 

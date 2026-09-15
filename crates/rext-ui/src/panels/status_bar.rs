@@ -5,7 +5,7 @@ use crate::session::SessionRef;
 
 pub fn StatusBar(session: SessionRef, height: f32) -> View {
     let th = theme();
-    let (title, dirty, msg, pos, lines) = {
+    let (title, dirty, msg, pos, lines, sel_len, can_undo, can_redo) = {
         let ws = session.ws.borrow();
         let h = ws.active();
         (
@@ -14,6 +14,13 @@ pub fn StatusBar(session: SessionRef, height: f32) -> View {
             ws.status.clone(),
             h.map(|x| x.selection.head).unwrap_or_default(),
             h.map(|x| x.buffer.len_lines()).unwrap_or(0),
+            h.map(|x| {
+                let (a, b) = x.selection.range_offsets(&x.buffer);
+                b - a
+            })
+            .unwrap_or(0),
+            h.map(|x| x.history.can_undo()).unwrap_or(false),
+            h.map(|x| x.history.can_redo()).unwrap_or(false),
         )
     };
 
@@ -30,12 +37,32 @@ pub fn StatusBar(session: SessionRef, height: f32) -> View {
             .color(th.on_surface),
         Text(msg).size(Sp(11.0)).color(th.on_surface_variant),
         Spacer(),
-        Text(format!("{lines} lines"))
-            .size(Sp(11.0))
-            .color(th.on_surface_variant),
+        if sel_len > 0 {
+            Text(format!("{sel_len} selected"))
+                .size(Sp(11.0))
+                .color(th.primary)
+        } else {
+            Text(format!("{lines} lines"))
+                .size(Sp(11.0))
+                .color(th.on_surface_variant)
+        },
         Text(format!("Ln {}, Col {}", pos.row + 1, pos.column + 1))
             .size(Sp(11.0))
             .color(th.on_surface),
+        Text(if can_undo { "↩" } else { " " }.to_string())
+            .size(Sp(11.0))
+            .color(if can_undo {
+                th.on_surface_variant
+            } else {
+                th.surface_container
+            }),
+        Text(if can_redo { "↪" } else { " " }.to_string())
+            .size(Sp(11.0))
+            .color(if can_redo {
+                th.on_surface_variant
+            } else {
+                th.surface_container
+            }),
         Text("UTF-8".to_string())
             .size(Sp(11.0))
             .color(th.on_surface_variant),

@@ -45,6 +45,13 @@ pub enum Cmd {
     MovePageUp(usize),
     MovePageDown(usize),
     SelectAll,
+    Copy,
+    Cut,
+    Paste,
+    MoveWordLeft,
+    MoveWordRight,
+    DeleteWordLeft,
+    DeleteWordRight,
     Undo,
     Redo,
     Save,
@@ -230,7 +237,7 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
             }
         }
         MoveLeft | MoveRight | MoveUp | MoveDown | MoveHome | MoveEnd | MoveDocStart
-        | MoveDocEnd | MovePageUp(_) | MovePageDown(_) => {
+        | MoveDocEnd | MovePageUp(_) | MovePageDown(_) | MoveWordLeft | MoveWordRight => {
             h.history.seal();
             if !extend {
                 h.selection.anchor = h.selection.head;
@@ -245,6 +252,16 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
                     let o = h.buffer.offset_of(h.selection.head);
                     h.selection.head =
                         h.buffer.point_of((o + 1).min(h.buffer.len_chars()));
+                    h.goal_column = None;
+                }
+                MoveWordLeft => {
+                    let o = h.buffer.offset_of(h.selection.head);
+                    h.selection.head = h.buffer.point_of(word_start_before(h, o));
+                    h.goal_column = None;
+                }
+                MoveWordRight => {
+                    let o = h.buffer.offset_of(h.selection.head);
+                    h.selection.head = h.buffer.point_of(word_end_after(h, o));
                     h.goal_column = None;
                 }
                 MoveUp => move_vert(h, -1),
@@ -272,6 +289,36 @@ fn exec_on_handle(h: &mut BufferHandle, cmd: Cmd, extend: bool) -> bool {
             if !extend {
                 h.selection.anchor = h.selection.head;
             }
+        }
+        DeleteWordLeft => {
+            if !h.selection.is_empty() {
+                replace_sel(h, "", "delete-word");
+            } else {
+                let off = h.buffer.offset_of(h.selection.head);
+                let start = word_start_before(h, off);
+                if start == off {
+                    return false;
+                }
+                delete_range(h, start, off, "delete-word");
+            }
+        }
+        DeleteWordRight => {
+            if !h.selection.is_empty() {
+                replace_sel(h, "", "delete-word");
+            } else {
+                let off = h.buffer.offset_of(h.selection.head);
+                let end = word_end_after(h, off);
+                if end == off {
+                    return false;
+                }
+                delete_range(h, off, end, "delete-word");
+            }
+        }
+        Copy | Cut | Paste => {
+            // UI layer handles the clipboard IO via `repose_core::clipboard`
+            // (needs the platform-registered fns); reaching here means the
+            // UI forgot to intercept. No-op rather than silently dropping.
+            return false;
         }
         SelectAll => {
             h.history.seal();
@@ -322,6 +369,101 @@ fn replace_sel(h: &mut BufferHandle, s: &str, label: &'static str) {
     h.goal_column = None;
 }
 
+fn delete_range(h: &mut BufferHandle, start: usize, end: usize, label: &'static str) {
+    if start == end {
+        return;
+    }
+    h.history.begin(label, h.selection.head);
+    let text = h.buffer.slice_chars(start, end);
+    h.history
+        .apply(&mut h.buffer, Edit::Delete { at: start, text });
+    h.selection = Selection::caret(h.buffer.point_of(start));
+    h.history.commit(h.selection.head);
+    h.goal_column = None;
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Char offset of the start of the word (or whitespace run) before `off`.
+/// Mirrors `word_range` grapheme semantics from repose's textfield.
+fn word_start_before(h: &BufferHandle, off: usize) -> usize {
+    let total = h.buffer.len_chars();
+    let off = off.min(total);
+    if off == 0 {
+        return 0;
+    }
+    let text = h.buffer.slice_chars(0, off);
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = chars.len();
+    // skip one class run of separators first (so Ctrl+Left from mid-word
+    // jumps to word start, from word start jumps over whitespace to prev word)
+    let mut skipped_newline = false;
+    while i > 0 {
+        let c = chars[i - 1];
+        if c == '\n' {
+            if skipped_newline {
+                break;
+            }
+            skipped_newline = true;
+            i -= 1;
+            break;
+        }
+        if is_word_char(c) {
+            break;
+        }
+        i -= 1;
+    }
+    let in_word = i > 0 && is_word_char(chars[i - 1]);
+    while i > 0 {
+        let c = chars[i - 1];
+        if c == '\n' || is_word_char(c) != in_word {
+            break;
+        }
+        i -= 1;
+    }
+    // map back: chars[..i] length in chars == char offset since slice started at 0
+    i
+}
+
+/// Char offset of the end of the word (or whitespace run) after `off`.
+fn word_end_after(h: &BufferHandle, off: usize) -> usize {
+    let total = h.buffer.len_chars();
+    let off = off.min(total);
+    if off >= total {
+        return total;
+    }
+    let text = h.buffer.slice_chars(off, total);
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let mut skipped_newline = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\n' {
+            if skipped_newline {
+                break;
+            }
+            skipped_newline = true;
+            i += 1;
+            break;
+        }
+        if is_word_char(c) {
+            break;
+        }
+        i += 1;
+    }
+    let in_word = i < chars.len() && is_word_char(chars[i]);
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\n' || is_word_char(c) != in_word {
+            break;
+        }
+        i += 1;
+    }
+    off + i
+}
+
 fn move_vert(h: &mut BufferHandle, delta: isize) {
     let goal = *h.goal_column.get_or_insert(h.selection.head.column);
     let max = h.buffer.len_lines().saturating_sub(1) as isize;
@@ -362,3 +504,49 @@ fn main() {
     println!(\"hello, repose\");
 }
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ws_with(text: &str) -> Workspace {
+        let mut ws = Workspace::new(PathBuf::from("/tmp"), None);
+        ws.tab_order.clear();
+        ws.buffers.clear();
+        ws.open_buffer(Buffer::from_str(text));
+        ws
+    }
+
+    #[test]
+    fn word_move_and_delete() {
+        let mut ws = ws_with("hello world  foo");
+        // fresh caret is at 0,0 → jump to end first
+        ws.exec(Cmd::MoveDocEnd, false);
+        // caret at end → Ctrl+Left lands on "foo" start (13)
+        ws.exec(Cmd::MoveWordLeft, false);
+        assert_eq!(ws.active().unwrap().selection.head.column, 13);
+        // again → "world" start (6)
+        ws.exec(Cmd::MoveWordLeft, false);
+        assert_eq!(ws.active().unwrap().selection.head.column, 6);
+        // Ctrl+Right from 6 → end of "world" (11)
+        ws.exec(Cmd::MoveWordRight, false);
+        assert_eq!(ws.active().unwrap().selection.head.column, 11);
+        // Ctrl+Backspace deletes "world"
+        ws.exec(Cmd::DeleteWordLeft, false);
+        assert_eq!(ws.active().unwrap().buffer.line(0), "hello   foo");
+        // undo restores
+        ws.exec(Cmd::Undo, false);
+        assert_eq!(ws.active().unwrap().buffer.line(0), "hello world  foo");
+    }
+
+    #[test]
+    fn copy_cut_paste_cmds_exist() {
+        // Clipboard IO itself is platform-backed (tested manually); here we
+        // assert the commands route without panicking on empty selection.
+        let mut ws = ws_with("abc");
+        ws.exec(Cmd::Copy, false);
+        ws.exec(Cmd::Cut, false);
+        // Cut with empty selection is a no-op returning false internally.
+        assert_eq!(ws.active().unwrap().buffer.line(0), "abc");
+    }
+}

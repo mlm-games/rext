@@ -12,6 +12,9 @@ material_symbols! {
     description: '\u{E873}',
     chevron_right: '\u{E5CC}',
     expand_more: '\u{E5CF}',
+    refresh: '\u{E5D5}',
+    unfold_less: '\u{E5D6}',
+    my_location: '\u{E55C}',
 }
 
 pub fn FileTreePanel(session: SessionRef) -> View {
@@ -99,12 +102,50 @@ pub fn FileTreePanel(session: SessionRef) -> View {
             .fill_max_width()
             .height(Dp(28.0))
             .padding(Dp(10.0))
+            .gap(Dp(4.0))
             .align_items(AlignItems::CENTER))
-        .child(
+        .child((
             Text(root_name.to_uppercase())
                 .size(Sp(10.5))
                 .color(th.on_surface_variant),
-        ),
+            Spacer(),
+            {
+                let s = session.clone();
+                Box(Modifier::new()
+                    .size(Dp(20.0), Dp(20.0))
+                    .clip_rounded(Dp(4.0))
+                    .on_click(move || s.refresh_tree()))
+                .child(
+                    Icon(Symbols::refresh)
+                        .size(Sp(14.0))
+                        .color(th.on_surface_variant),
+                )
+            },
+            {
+                let s = session.clone();
+                Box(Modifier::new()
+                    .size(Dp(20.0), Dp(20.0))
+                    .clip_rounded(Dp(4.0))
+                    .on_click(move || s.collapse_all()))
+                .child(
+                    Icon(Symbols::unfold_less)
+                        .size(Sp(14.0))
+                        .color(th.on_surface_variant),
+                )
+            },
+            {
+                let s = session.clone();
+                Box(Modifier::new()
+                    .size(Dp(20.0), Dp(20.0))
+                    .clip_rounded(Dp(4.0))
+                    .on_click(move || s.reveal_active()))
+                .child(
+                    Icon(Symbols::my_location)
+                        .size(Sp(14.0))
+                        .color(th.on_surface_variant),
+                )
+            },
+        )),
         ScrollArea(
             Modifier::new().fill_max_size(),
             remember_scroll_state("rext:tree"),

@@ -5,7 +5,10 @@ use repose_ui::*;
 use crate::chrome::layout;
 use crate::session::SessionRef;
 
-material_symbols! { close: '\u{E5CD}' }
+material_symbols! {
+    close: '\u{E5CD}',
+    add: '\u{E145}',
+}
 
 pub fn TabBar(session: SessionRef) -> View {
     let th = theme();
@@ -81,7 +84,24 @@ pub fn TabBar(session: SessionRef) -> View {
             .fill_max_width()
             .height(Dp(layout::TAB_H))
             .background(th.surface_container))
-        .child(items),
+        .child((
+            items,
+            {
+                let s = session.clone();
+                Box(Modifier::new()
+                    .size(Dp(layout::TAB_H), Dp(layout::TAB_H))
+                    .on_click(move || {
+                        use rext_core::Buffer;
+                        s.ws.borrow_mut().open_buffer(Buffer::empty());
+                        s.bump();
+                    }))
+                .child(
+                    Icon(Symbols::add)
+                        .size(Sp(16.0))
+                        .color(th.on_surface_variant),
+                )
+            },
+        )),
         Box(Modifier::new()
             .fill_max_width()
             .height(Dp(1.0))

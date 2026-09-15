@@ -11,6 +11,7 @@ pub struct Session {
     pub rev: Mutable<u64>,
     pub palette_open: Mutable<bool>,
     pub palette_query: Mutable<String>,
+    pub palette_sel: Mutable<usize>,
     pub tree: RefCell<Vec<TreeEntry>>,
 }
 
@@ -29,9 +30,75 @@ impl Session {
     }
 
     pub fn dispatch(&self, cmd: Cmd, extend: bool) {
+        use Cmd::{Copy, Cut, Paste};
+        // Clipboard touches platform IO — intercept before `Workspace::exec`.
+        match cmd {
+            Copy | Cut | Paste => {
+                if self.clipboard_cmd(cmd) {
+                    self.bump();
+                }
+                return;
+            }
+            _ => {}
+        }
         let changed = self.ws.borrow_mut().exec(cmd, extend);
         if changed {
             self.bump();
+        }
+    }
+
+    /// Copy / Cut / Paste via the platform-registered clipboard fns
+    /// (`repose_core::clipboard`). Returns true if model state changed.
+    fn clipboard_cmd(&self, cmd: Cmd) -> bool {
+        use rext_core::{Edit, Selection};
+        let mut ws = self.ws.borrow_mut();
+        let Some(h) = ws.active_mut() else {
+            return false;
+        };
+        match cmd {
+            Cmd::Copy => {
+                let (a, b) = h.selection.range_offsets(&h.buffer);
+                if a == b {
+                    ws.status = "nothing selected".into();
+                    return true; // status changed → recompose
+                }
+                let text = h.buffer.slice_chars(a, b);
+                repose_core::clipboard::copy_to_clipboard(&text);
+                repose_core::clipboard::set_primary_selection(&text);
+                ws.status = format!("copied {} chars", text.chars().count());
+                true
+            }
+            Cmd::Cut => {
+                let (a, b) = h.selection.range_offsets(&h.buffer);
+                if a == b {
+                    return false;
+                }
+                let text = h.buffer.slice_chars(a, b);
+                repose_core::clipboard::copy_to_clipboard(&text);
+                repose_core::clipboard::set_primary_selection(&text);
+                h.history.begin("cut", h.selection.head);
+                h.history
+                    .apply(&mut h.buffer, Edit::Delete { at: a, text });
+                h.selection = Selection::caret(h.buffer.point_of(a));
+                h.history.commit(h.selection.head);
+                h.goal_column = None;
+                ws.status = "cut".into();
+                true
+            }
+            Cmd::Paste => {
+                let Some(text) = repose_core::clipboard::paste_text() else {
+                    ws.status = "clipboard empty".into();
+                    return true;
+                };
+                if text.is_empty() {
+                    return false;
+                }
+                // Reuse the insert path (handles selection replace + history).
+                drop(ws);
+                self.ws.borrow_mut().exec(Cmd::Insert(text), false);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -68,6 +135,89 @@ impl Session {
             tree.extend(tail);
         }
         drop(tree);
+        self.bump();
+    }
+
+    /// Re-read the root directory, preserving expansion state.
+    pub fn refresh_tree(&self) {
+        let expanded: std::collections::HashSet<PathBuf> = self
+            .tree
+            .borrow()
+            .iter()
+            .filter(|e| e.is_dir && e.expanded)
+            .map(|e| e.path.clone())
+            .collect();
+        let root = self.ws.borrow().root.clone();
+        let mut tree = list_dir(&root, 0);
+        // Re-expand previously open dirs (one level deep each; deeper state
+        // is rebuilt on demand as the user opens).
+        let mut i = 0;
+        while i < tree.len() {
+            if tree[i].is_dir && expanded.contains(&tree[i].path) {
+                tree[i].expanded = true;
+                let children = list_dir(&tree[i].path, tree[i].depth + 1);
+                let tail = tree.split_off(i + 1);
+                tree.extend(children);
+                tree.extend(tail);
+            }
+            i += 1;
+        }
+        *self.tree.borrow_mut() = tree;
+        self.bump();
+    }
+
+    /// Collapse every expanded directory.
+    pub fn collapse_all(&self) {
+        let mut tree = self.tree.borrow_mut();
+        tree.retain(|e| e.depth == 0);
+        for e in tree.iter_mut() {
+            e.expanded = false;
+        }
+        drop(tree);
+        self.bump();
+    }
+
+    /// Expand ancestors of the active buffer's path and select it.
+    /// Returns the tree index to scroll to (unused for now).
+    pub fn reveal_active(&self) {
+        let path = self
+            .ws
+            .borrow()
+            .active()
+            .and_then(|h| h.buffer.path().map(|p| p.to_path_buf()));
+        let Some(path) = path else {
+            return;
+        };
+        // Walk up from the file, expanding each ancestor dir row.
+        let mut ancestors: Vec<PathBuf> = Vec::new();
+        let mut cur = path.parent().map(|p| p.to_path_buf());
+        let root = self.ws.borrow().root.clone();
+        while let Some(c) = cur {
+            if c == root {
+                break;
+            }
+            ancestors.push(c.clone());
+            cur = c.parent().map(|p| p.to_path_buf());
+            if ancestors.len() > 32 {
+                break;
+            }
+        }
+        for anc in ancestors.into_iter().rev() {
+            let idx = self
+                .tree
+                .borrow()
+                .iter()
+                .position(|e| e.is_dir && e.path == anc && !e.expanded);
+            if let Some(i) = idx {
+                // expand without bumping per step
+                let mut tree = self.tree.borrow_mut();
+                tree[i].expanded = true;
+                let children = list_dir(&tree[i].path, tree[i].depth + 1);
+                let tail = tree.split_off(i + 1);
+                tree.extend(children);
+                tree.extend(tail);
+            }
+        }
         self.bump();
     }
 }
@@ -123,6 +273,7 @@ pub fn use_session() -> SessionRef {
             rev: Mutable::new(0u64),
             palette_open: Mutable::new(false),
             palette_query: Mutable::new(String::new()),
+            palette_sel: Mutable::new(0usize),
             tree: RefCell::new(tree),
             ws: RefCell::new(Workspace::new(root, initial)),
         }

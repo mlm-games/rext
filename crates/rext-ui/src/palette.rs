@@ -36,6 +36,11 @@ pub fn CommandPalette(session: SessionRef) -> View {
 
     let s_scrim = session.clone();
     let s_tf = session.clone();
+    let s_sub = session.clone();
+    let s_up = session.clone();
+    let s_dn = session.clone();
+    // Clamp selection into range each compose.
+    let sel = (*session.palette_sel.get()).min(items.len().saturating_sub(1));
 
     ZStack(Modifier::new().fill_max_size()).child((
         Box(Modifier::new()
@@ -57,7 +62,33 @@ pub fn CommandPalette(session: SessionRef) -> View {
                 .on_click(|| {}))
             .child(
                 Column(Modifier::new().fill_max_width()).child((
-                    Box(Modifier::new().fill_max_width().padding(Dp(12.0))).child(
+                    Box(Modifier::new()
+                        .fill_max_width()
+                        .padding(Dp(12.0))
+                        // ArrowUp/Down move selection, Enter runs it.
+                        .on_key_event(move |ev: KeyEvent| {
+                            use repose_core::input::{Key, KeyEventType};
+                            if ev.event_type != KeyEventType::Down {
+                                return false;
+                            }
+                            match ev.key {
+                                Key::ArrowDown => {
+                                    let n = build_items(&s_dn, &s_dn.palette_query.get()).len();
+                                    s_dn.palette_sel.update(|v| {
+                                        *v = (*v + 1).min(n.saturating_sub(1))
+                                    });
+                                    true
+                                }
+                                Key::ArrowUp => {
+                                    s_up.palette_sel.update(|v| {
+                                        *v = v.saturating_sub(1)
+                                    });
+                                    true
+                                }
+                                _ => false,
+                            }
+                        }))
+                    .child(
                         BasicTextField(
                             tf.clone(),
                             Modifier::new().fill_max_width().height(Dp(36.0)),
@@ -65,7 +96,20 @@ pub fn CommandPalette(session: SessionRef) -> View {
                             TextFieldConfig {
                                 on_change: Some(Rc::new(move |s: String| {
                                     s_tf.palette_query.set(s);
+                                    s_tf.palette_sel.set(0);
                                 })),
+                                on_submit: Some(Rc::new(move |_: String| {
+                                    let items =
+                                        build_items(&s_sub, &s_sub.palette_query.get());
+                                    let i = (*s_sub.palette_sel.get())
+                                        .min(items.len().saturating_sub(1));
+                                    if let Some(it) = items.into_iter().nth(i) {
+                                        (it.run)(&s_sub);
+                                        s_sub.palette_open.set(false);
+                                    }
+                                })),
+                                line_limits:
+                                    repose_core::TextFieldLineLimits::SingleLine,
                                 ..Default::default()
                             },
                         ),
@@ -87,7 +131,7 @@ pub fn CommandPalette(session: SessionRef) -> View {
                             items
                                 .into_iter()
                                 .enumerate()
-                                .map(|(i, it)| row(session.clone(), it, i == 0))
+                                .map(|(i, it)| row(session.clone(), it, i == sel))
                                 .collect::<Vec<_>>(),
                         ),
                     ),
@@ -154,6 +198,21 @@ fn build_items(session: &SessionRef, q: &str) -> Vec<Item> {
             run: Rc::new(|s| s.dispatch(Cmd::SelectAll, false)),
         },
         Item {
+            label: "Edit: Copy".into(),
+            detail: "Ctrl+C".into(),
+            run: Rc::new(|s| s.dispatch(Cmd::Copy, false)),
+        },
+        Item {
+            label: "Edit: Cut".into(),
+            detail: "Ctrl+X".into(),
+            run: Rc::new(|s| s.dispatch(Cmd::Cut, false)),
+        },
+        Item {
+            label: "Edit: Paste".into(),
+            detail: "Ctrl+V".into(),
+            run: Rc::new(|s| s.dispatch(Cmd::Paste, false)),
+        },
+        Item {
             label: "File: New Untitled".into(),
             detail: String::new(),
             run: Rc::new(|s| {
@@ -161,6 +220,25 @@ fn build_items(session: &SessionRef, q: &str) -> Vec<Item> {
                 s.ws.borrow_mut().open_buffer(Buffer::empty());
                 s.bump();
             }),
+        },
+        Item {
+            label: "File: Close Buffer".into(),
+            detail: "closes active tab".into(),
+            run: Rc::new(|s| {
+                let idx = s.ws.borrow().active;
+                s.ws.borrow_mut().close_tab(idx);
+                s.bump();
+            }),
+        },
+        Item {
+            label: "View: Refresh Explorer".into(),
+            detail: String::new(),
+            run: Rc::new(|s| s.refresh_tree()),
+        },
+        Item {
+            label: "View: Reveal Active File".into(),
+            detail: String::new(),
+            run: Rc::new(|s| s.reveal_active()),
         },
     ];
 
@@ -181,10 +259,52 @@ fn build_items(session: &SessionRef, q: &str) -> Vec<Item> {
     if ql.is_empty() {
         return items;
     }
-    items
+    // Subsequence fuzzy match with simple scoring: earlier + denser matches
+    // win. No new deps — nucleo can replace this when file count grows.
+    let mut scored: Vec<(i32, usize, Item)> = items
         .into_iter()
-        .filter(|it| {
-            it.label.to_lowercase().contains(&ql) || it.detail.to_lowercase().contains(&ql)
+        .enumerate()
+        .filter_map(|(idx, it)| {
+            let hay = format!("{} {}", it.label, it.detail).to_lowercase();
+            fuzzy_score(&ql, &hay).map(|s| (s, idx, it))
         })
-        .collect()
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, _, it)| it).collect()
+}
+
+/// Subsequence score: +10 per matched char, −2 per skipped char between
+/// matches, −1 per leading skip. Returns None if `needle` is not a
+/// subsequence of `hay`.
+fn fuzzy_score(needle: &str, hay: &str) -> Option<i32> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let mut score = 0i32;
+    let mut hi = 0usize;
+    let hay_chars: Vec<char> = hay.chars().collect();
+    let mut first = true;
+    for nc in needle.chars() {
+        let mut found = false;
+        while hi < hay_chars.len() {
+            let hc = hay_chars[hi];
+            hi += 1;
+            if hc == nc {
+                score += 10;
+                found = true;
+                break;
+            } else if first {
+                score -= 1;
+            } else {
+                score -= 2;
+            }
+        }
+        if !found {
+            return None;
+        }
+        first = false;
+    }
+    // Prefer shorter candidates on ties elsewhere (stable order keeps it).
+    score -= hay_chars.len() as i32 / 16;
+    Some(score)
 }

@@ -66,6 +66,27 @@ pub fn translate(ev: &KeyEvent, page_rows: usize) -> Option<Action> {
                     app: None,
                 });
             }
+            Key::Character('c') | Key::Character('C') => {
+                return Some(Action {
+                    cmd: Cmd::Copy,
+                    extend: false,
+                    app: None,
+                });
+            }
+            Key::Character('x') | Key::Character('X') => {
+                return Some(Action {
+                    cmd: Cmd::Cut,
+                    extend: false,
+                    app: None,
+                });
+            }
+            Key::Character('v') | Key::Character('V') => {
+                return Some(Action {
+                    cmd: Cmd::Paste,
+                    extend: false,
+                    app: None,
+                });
+            }
             _ => {}
         }
     }
@@ -76,6 +97,42 @@ pub fn translate(ev: &KeyEvent, page_rows: usize) -> Option<Action> {
             extend: false,
             app: Some(AppAction::ClosePalette),
         });
+    }
+
+    // Ctrl+Arrows / Ctrl+Backspace/Delete: word-wise ops (no chord needed
+    // for plain arrows; word variants require the chord).
+    if chord {
+        match ev.key {
+            Key::ArrowLeft => {
+                return Some(Action {
+                    cmd: Cmd::MoveWordLeft,
+                    extend: shift,
+                    app: None,
+                });
+            }
+            Key::ArrowRight => {
+                return Some(Action {
+                    cmd: Cmd::MoveWordRight,
+                    extend: shift,
+                    app: None,
+                });
+            }
+            Key::Backspace => {
+                return Some(Action {
+                    cmd: Cmd::DeleteWordLeft,
+                    extend: false,
+                    app: None,
+                });
+            }
+            Key::Delete => {
+                return Some(Action {
+                    cmd: Cmd::DeleteWordRight,
+                    extend: false,
+                    app: None,
+                });
+            }
+            _ => {}
+        }
     }
 
     let cmd = match ev.key {

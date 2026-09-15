@@ -171,6 +171,27 @@ fn paint(
 
     let ws = session.ws.borrow();
     let Some(ed) = ws.active() else {
+        // No buffer (shouldn't normally happen — Workspace keeps a scratch
+        // buffer — but paint the empty state instead of a dead canvas).
+        scope.draw_rect(
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+            },
+            chrome.editor_bg,
+            Px(0.0),
+        );
+        scope.draw_text(
+            "No open buffer — Ctrl+P → File: New Untitled",
+            Vec2 {
+                x: gutter_w + TEXT_PAD,
+                y: h * 0.4,
+            },
+            chrome.gutter_fg_active,
+            Px(FONT_PX),
+        );
         return;
     };
     let buf = &ed.buffer;
