@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod chrome;
+mod fuzzy;
 mod keymap;
 mod metrics_cache;
 mod palette;

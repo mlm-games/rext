@@ -104,6 +104,7 @@ pub fn CommandPalette(session: SessionRef) -> View {
                                     let i = (*s_sub.palette_sel.get())
                                         .min(items.len().saturating_sub(1));
                                     if let Some(it) = items.into_iter().nth(i) {
+                                        s_sub.record_command(&it.label);
                                         (it.run)(&s_sub);
                                         s_sub.palette_open.set(false);
                                     }
@@ -143,6 +144,7 @@ pub fn CommandPalette(session: SessionRef) -> View {
 
 fn row(session: SessionRef, item: Item, hi: bool) -> View {
     let th = theme();
+    let label = item.label.clone();
     let run = item.run.clone();
     let s = session.clone();
     Box(Modifier::new()
@@ -155,6 +157,7 @@ fn row(session: SessionRef, item: Item, hi: bool) -> View {
             Color::TRANSPARENT
         })
         .on_click(move || {
+            s.record_command(&label);
             run(&s);
             s.palette_open.set(false);
         }))
@@ -255,56 +258,43 @@ fn build_items(session: &SessionRef, q: &str) -> Vec<Item> {
         }
     }
 
-    let ql = q.to_lowercase();
-    if ql.is_empty() {
-        return items;
+    if q.chars().all(char::is_whitespace) {
+        return with_recents_first(session, items);
     }
-    // Subsequence fuzzy match with simple scoring: earlier + denser matches
-    // win. No new deps — nucleo can replace this when file count grows.
-    let mut scored: Vec<(i32, usize, Item)> = items
-        .into_iter()
+    let candidates: Vec<crate::fuzzy::StringMatchCandidate> = items
+        .iter()
         .enumerate()
-        .filter_map(|(idx, it)| {
-            let hay = format!("{} {}", it.label, it.detail).to_lowercase();
-            fuzzy_score(&ql, &hay).map(|s| (s, idx, it))
-        })
+        .map(|(i, it)| crate::fuzzy::StringMatchCandidate::new(i, humanized(&it.label)))
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    scored.into_iter().map(|(_, _, it)| it).collect()
+    let matches = crate::fuzzy::match_strings(q, &candidates, true);
+    let mut out: Vec<Item> = matches
+        .into_iter()
+        .filter_map(|m| items.get(m.candidate_id).cloned())
+        .collect();
+    if out.is_empty() {
+        out = items;
+    }
+    with_recents_first(session, out)
 }
 
-/// Subsequence score: +10 per matched char, −2 per skipped char between
-/// matches, −1 per leading skip. Returns None if `needle` is not a
-/// subsequence of `hay`.
-fn fuzzy_score(needle: &str, hay: &str) -> Option<i32> {
-    if needle.is_empty() {
-        return Some(0);
+fn humanized(label: &str) -> String {
+    label.replace('_', " ").to_lowercase()
+}
+
+fn with_recents_first(session: &SessionRef, mut items: Vec<Item>) -> Vec<Item> {
+    let recents = session.recent_commands();
+    if recents.is_empty() {
+        return items;
     }
-    let mut score = 0i32;
-    let mut hi = 0usize;
-    let hay_chars: Vec<char> = hay.chars().collect();
-    let mut first = true;
-    for nc in needle.chars() {
-        let mut found = false;
-        while hi < hay_chars.len() {
-            let hc = hay_chars[hi];
-            hi += 1;
-            if hc == nc {
-                score += 10;
-                found = true;
-                break;
-            } else if first {
-                score -= 1;
-            } else {
-                score -= 2;
-            }
+    let mut rest = Vec::with_capacity(items.len());
+    let mut head = Vec::new();
+    for it in items.drain(..) {
+        if recents.iter().any(|r| *r == it.label) {
+            head.push(it);
+        } else {
+            rest.push(it);
         }
-        if !found {
-            return None;
-        }
-        first = false;
     }
-    // Prefer shorter candidates on ties elsewhere (stable order keeps it).
-    score -= hay_chars.len() as i32 / 16;
-    Some(score)
+    head.extend(rest);
+    head
 }

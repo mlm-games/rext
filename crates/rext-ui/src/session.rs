@@ -14,6 +14,7 @@ pub struct Session {
     pub palette_query: Mutable<String>,
     pub palette_sel: Mutable<usize>,
     pub tree: RefCell<Vec<TreeEntry>>,
+    recent: RefCell<Vec<String>>,
     pub diagnostics: RefCell<DiagnosticsStore>,
     pub tasks: RefCell<TaskInventory>,
     pub pending_spawns: RefCell<Vec<ResolvedTask>>,
@@ -37,6 +38,17 @@ pub struct TreeEntry {
 impl Session {
     pub fn bump(&self) {
         self.rev.update(|r| *r = r.wrapping_add(1));
+    }
+
+    pub fn record_command(&self, label: &str) {
+        let mut recent = self.recent.borrow_mut();
+        recent.retain(|r| r != label);
+        recent.insert(0, label.to_string());
+        recent.truncate(8);
+    }
+
+    pub fn recent_commands(&self) -> Vec<String> {
+        self.recent.borrow().clone()
     }
 
     pub fn dispatch(&self, cmd: Cmd, extend: bool) {
@@ -333,6 +345,7 @@ pub fn use_session() -> SessionRef {
             palette_open: Mutable::new(false),
             palette_query: Mutable::new(String::new()),
             palette_sel: Mutable::new(0usize),
+            recent: RefCell::new(Vec::new()),
             tree: RefCell::new(tree),
             diagnostics: RefCell::new(DiagnosticsStore::default()),
             tasks: RefCell::new(TaskInventory::default()),
