@@ -243,7 +243,41 @@ fn build_items(session: &SessionRef, q: &str) -> Vec<Item> {
             detail: String::new(),
             run: Rc::new(|s| s.reveal_active()),
         },
+        Item {
+            label: "Tasks: Refresh".into(),
+            detail: "reload .vscode/tasks.json".into(),
+            run: Rc::new(|s| {
+                s.refresh_tasks();
+                s.ws.borrow_mut().status = "tasks refreshed".into();
+                s.bump();
+            }),
+        },
     ];
+
+    {
+        let cx = session.task_context();
+        let root = session.ws.borrow().root.clone();
+        for (i, t) in session.tasks.borrow().templates.iter().enumerate() {
+            let resolved = t.resolve(&root, &cx);
+            items.push(Item {
+                label: format!("Tasks: {}", resolved.resolved_label),
+                detail: resolved.command_label,
+                run: Rc::new(move |s| s.schedule_task(i)),
+            });
+        }
+    }
+    for t in session.tasks.borrow().last_scheduled.clone() {
+        let label = format!("Tasks: Rerun {}", t.resolved_label);
+        let detail = t.command_label.clone();
+        items.push(Item {
+            label,
+            detail,
+            run: Rc::new(move |s| {
+                s.pending_spawns.borrow_mut().push(t.clone());
+                s.bump();
+            }),
+        });
+    }
 
     {
         let tree = session.tree.borrow();

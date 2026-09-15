@@ -338,6 +338,8 @@ pub fn use_session() -> SessionRef {
             None => (std::env::current_dir().unwrap_or_default(), None),
         };
         let tree = list_dir(&root, 0);
+        let mut inventory = TaskInventory::default();
+        inventory.refresh(&root);
         // NOTE: plain `Mutable::new` here, NOT `remember_mutable_with_key`:
         // this closure already runs inside `remember_with_key`'s init, which
         // holds the composer borrow - a nested remember would panic with
@@ -351,7 +353,7 @@ pub fn use_session() -> SessionRef {
             recent: RefCell::new(Vec::new()),
             tree: RefCell::new(tree),
             diagnostics: RefCell::new(DiagnosticsStore::default()),
-            tasks: RefCell::new(TaskInventory::default()),
+            tasks: RefCell::new(inventory),
             pending_spawns: RefCell::new(Vec::new()),
             diffs: RefCell::new(DiffStore::default()),
             find_open: Mutable::new(false),
