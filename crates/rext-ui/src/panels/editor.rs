@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 use repose_core::prelude::*;
 use repose_ui::*;
-use super::{editor_surface::EditorSurface, tab_bar::TabBar};
+use super::{editor_surface::EditorSurface, find_bar::FindBar, tab_bar::TabBar};
 use crate::session::SessionRef;
 
 pub fn EditorPanel(session: SessionRef) -> View {
@@ -13,6 +13,7 @@ pub fn EditorPanel(session: SessionRef) -> View {
     )
     .child((
         TabBar(session.clone()),
-        Box(Modifier::new().fill_max_width().flex_grow(1.0)).child(EditorSurface(session)),
+        Box(Modifier::new().fill_max_width().flex_grow(1.0)).child(EditorSurface(session.clone())),
+        FindBar(session),
     ))
 }

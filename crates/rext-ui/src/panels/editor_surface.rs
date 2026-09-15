@@ -138,9 +138,47 @@ pub fn EditorSurface(session: SessionRef) -> View {
                         if *s_key.palette_open.get() {
                             s_key.palette_open.set(false);
                             true
+                        } else if *s_key.find_open.get() {
+                            s_key.find_open.set(false);
+                            true
                         } else {
                             false
                         }
+                    }
+                    Some(AppAction::ToggleFind) => {
+                        let was_open = *s_key.find_open.get();
+                        if !was_open {
+                            // Pre-fill from primary selection.
+                            let ws = s_key.ws.borrow();
+                            if let Some(h) = ws.active() {
+                                let (a, b) = h.selections.primary().range_offsets(&h.buffer);
+                                if a != b {
+                                    let text = h.buffer.slice_chars(a, b);
+                                    if !text.contains('\n') && text.chars().count() <= 80 {
+                                        s_key.find_query.set(text);
+                                    }
+                                }
+                            }
+                            s_key.find_match_idx.set(0);
+                        }
+                        s_key.find_open.set(!was_open);
+                        true
+                    }
+                    Some(AppAction::FindNext) => {
+                        s_key.find_match_idx.update(|v| {
+                            let (n, _) = crate::panels::find_bar::find_matches(&s_key);
+                            *v = if n == 0 { 0 } else { (*v + 1) % n };
+                        });
+                        jump_to_find(&s_key);
+                        true
+                    }
+                    Some(AppAction::FindPrev) => {
+                        s_key.find_match_idx.update(|v| {
+                            let (n, _) = crate::panels::find_bar::find_matches(&s_key);
+                            *v = if n == 0 { 0 } else { (*v + n - 1) % n };
+                        });
+                        jump_to_find(&s_key);
+                        true
                     }
                     None => {
                         s_key.dispatch(act.cmd, act.extend);
@@ -159,6 +197,16 @@ pub fn EditorSurface(session: SessionRef) -> View {
             );
         },
     )
+}
+
+fn jump_to_find(session: &SessionRef) {
+    let (_, matches) = crate::panels::find_bar::find_matches(session);
+    if matches.is_empty() {
+        return;
+    }
+    let idx = (*session.find_match_idx.get()).min(matches.len() - 1);
+    let (row, sc, _) = matches[idx];
+    session.jump_to_active(rext_core::Point { row, column: sc });
 }
 
 fn paint(
@@ -227,6 +275,14 @@ fn paint(
         .map(|s| s.head().row)
         .collect();
 
+    let (find_matches, find_active) = if *session.find_open.get() {
+        let (_, m) = crate::panels::find_bar::find_matches(session);
+        let a = (*session.find_match_idx.get()).min(m.len().saturating_sub(1));
+        (m, a)
+    } else {
+        (Vec::new(), 0)
+    };
+
     // Diff hunks for the visible window, resolved to (row_range, color).
     // Deleted hunks are zero-width at the deletion row: paint the marker on
     // that row itself. `session.diffs` is a separate RefCell from `ws`, so
@@ -265,6 +321,41 @@ fn paint(
                 chrome.current_line,
                 Px(0.0),
             );
+        }
+
+        // find matches (all subtle, active one stronger)
+        if !find_matches.is_empty() {
+            let m = cache.metrics(buf.version(), row, &display, FONT_PX);
+            for (i, (mr, mc0, mc1)) in find_matches.iter().enumerate() {
+                if *mr != row {
+                    continue;
+                }
+                let d0 = ed
+                    .display
+                    .point_to_display(buf, Point { row, column: *mc0 })
+                    .column;
+                let d1 = ed
+                    .display
+                    .point_to_display(buf, Point { row, column: *mc1 })
+                    .column;
+                let x0 = text_x + LineMetricsCache::x_for_col(m, d0);
+                let x1 = text_x + LineMetricsCache::x_for_col(m, d1);
+                let is_active = i == find_active;
+                scope.draw_rect(
+                    Rect {
+                        x: x0,
+                        y: y + LINE_H - 3.0,
+                        w: (x1 - x0).max(2.0),
+                        h: if is_active { 3.0 } else { 1.5 },
+                    },
+                    if is_active {
+                        chrome.caret
+                    } else {
+                        chrome.gutter_fg
+                    },
+                    Px(0.0),
+                );
+            }
         }
 
         // selections (all cursors)

@@ -17,6 +17,9 @@ pub struct Session {
     pub tasks: RefCell<TaskInventory>,
     pub pending_spawns: RefCell<Vec<ResolvedTask>>,
     pub diffs: RefCell<DiffStore>,
+    pub find_open: Mutable<bool>,
+    pub find_query: Mutable<String>,
+    pub find_match_idx: Mutable<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -328,6 +331,9 @@ pub fn use_session() -> SessionRef {
             tasks: RefCell::new(TaskInventory::default()),
             pending_spawns: RefCell::new(Vec::new()),
             diffs: RefCell::new(DiffStore::default()),
+            find_open: Mutable::new(false),
+            find_query: Mutable::new(String::new()),
+            find_match_idx: Mutable::new(0usize),
             ws: RefCell::new(Workspace::new(root, initial)),
         }
     })
@@ -479,6 +485,12 @@ impl Session {
         }
         drop(ws);
         self.bump();
+    }
+
+    pub fn jump_to_active(&self, point: rext_core::Point) {
+        if let Some(id) = self.ws.borrow().active_id() {
+            self.jump_to(id, point);
+        }
     }
 }
 

@@ -12,6 +12,9 @@ pub struct Action {
 pub enum AppAction {
     TogglePalette,
     ClosePalette,
+    ToggleFind,
+    FindNext,
+    FindPrev,
 }
 
 pub fn translate(ev: &KeyEvent, page_rows: usize) -> Option<Action> {
@@ -87,6 +90,13 @@ pub fn translate(ev: &KeyEvent, page_rows: usize) -> Option<Action> {
                     app: None,
                 });
             }
+            Key::Character('f') | Key::Character('F') => {
+                return Some(Action {
+                    cmd: Cmd::Save,
+                    extend: false,
+                    app: Some(AppAction::ToggleFind),
+                });
+            }
             _ => {}
         }
     }
@@ -97,6 +107,26 @@ pub fn translate(ev: &KeyEvent, page_rows: usize) -> Option<Action> {
             extend: false,
             app: Some(AppAction::ClosePalette),
         });
+    }
+
+    // F3 / Shift+F3: find next/prev (also when find bar focused — the bar
+    // doesn't consume them, so they bubble here).
+    match ev.key {
+        Key::F(3) if shift => {
+            return Some(Action {
+                cmd: Cmd::Save,
+                extend: false,
+                app: Some(AppAction::FindPrev),
+            });
+        }
+        Key::F(3) => {
+            return Some(Action {
+                cmd: Cmd::Save,
+                extend: false,
+                app: Some(AppAction::FindNext),
+            });
+        }
+        _ => {}
     }
 
     // Ctrl+Arrows / Ctrl+Backspace/Delete: word-wise ops (no chord needed
