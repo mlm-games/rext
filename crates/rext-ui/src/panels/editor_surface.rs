@@ -310,6 +310,41 @@ fn paint(
         let y = (row - first) as f32 * LINE_H;
         let display = ed.display.display_line(buf, row);
 
+        // indent guides (before text so glyphs paint over the top pixel)
+        {
+            let raw = buf.line(row);
+            let indent_chars = raw.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+            if indent_chars >= 2 {
+                let m = cache.metrics(buf.version(), row, &display, FONT_PX);
+                let tab_w = 4;
+                let mut col = 0usize;
+                for ch in raw.chars().take(indent_chars) {
+                    if ch == '\t' {
+                        col += tab_w - (col % tab_w);
+                    } else {
+                        col += 1;
+                    }
+                    if col % tab_w == 0 {
+                        let dcol = ed
+                            .display
+                            .point_to_display(buf, Point { row, column: col.min(buf.line_len(row)) })
+                            .column;
+                        let dx = text_x + LineMetricsCache::x_for_col(m, dcol);
+                        scope.draw_rect(
+                            Rect {
+                                x: dx,
+                                y,
+                                w: 1.0,
+                                h: LINE_H,
+                            },
+                            chrome.border,
+                            Px(0.0),
+                        );
+                    }
+                }
+            }
+        }
+
         if row == caret.row {
             scope.draw_rect(
                 Rect {
@@ -483,6 +518,8 @@ fn paint(
         );
     }
 
+    paint_matching_brackets(scope, session, buf, ed, text_x, first, last, cache, chrome);
+
     scope.draw_rect(
         Rect {
             x: gutter_w,
@@ -629,4 +666,77 @@ fn ed_display_col(buf: &rext_core::Buffer, row: usize, col: usize) -> usize {
         }
     }
     dcol
+}
+
+fn paint_matching_brackets(
+    scope: &mut DrawScope,
+    session: &SessionRef,
+    buf: &rext_core::Buffer,
+    ed: &rext_core::BufferHandle,
+    text_x: f32,
+    first: usize,
+    last: usize,
+    cache: &mut LineMetricsCache,
+    chrome: &crate::chrome::EditorChrome,
+) {
+    let primary = ed.selections.primary();
+    if !primary.is_empty() {
+        return;
+    }
+    let head = primary.head();
+    let lang = session
+        .ws
+        .borrow()
+        .active()
+        .and_then(|h| h.buffer.path())
+        .and_then(|p| session.syntax.language_for_path(p));
+    let Some(lang) = lang else {
+        return;
+    };
+    let full_text: String = (0..buf.len_lines())
+        .map(|r| buf.line(r))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let offset = buf.offset_of(head);
+    let Some((open, close)) = session.syntax.enclosing_brackets(lang, &full_text, offset) else {
+        return;
+    };
+    let byte_to_char = |b: usize| {
+        full_text[..b.min(full_text.len())].chars().count()
+    };
+    for byte_range in [open, close] {
+        let s = byte_to_char(byte_range.start);
+        let e = byte_to_char(byte_range.end);
+        if s >= e {
+            continue;
+        }
+        let sp = buf.point_of(s);
+        if sp.row < first || sp.row >= last {
+            continue;
+        }
+        let display = ed.display.display_line(buf, sp.row);
+        let m = cache.metrics(buf.version(), sp.row, &display, FONT_PX);
+        let d0 = ed
+            .display
+            .point_to_display(buf, sp)
+            .column;
+        let x0 = text_x + LineMetricsCache::x_for_col(m, d0);
+        let y = (sp.row - first) as f32 * LINE_H;
+        let w = (LineMetricsCache::x_for_col(
+            m,
+            ed.display.point_to_display(buf, buf.point_of(e)).column,
+        ) - x0)
+            .max(6.0);
+        scope.draw_rect_stroke(
+            Rect {
+                x: x0 - 1.0,
+                y: y + 1.0,
+                w: w + 2.0,
+                h: LINE_H - 2.0,
+            },
+            chrome.caret,
+            Px(0.0),
+            Px(1.0),
+        );
+    }
 }
