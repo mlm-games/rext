@@ -18,3 +18,4 @@ vte.workspace = true
 log.workspace = true
 anyhow.workspace = true
 unicode-segmentation.workspace = true
+unicode-width.workspace = true

@@ -12,6 +12,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CellAttr {
@@ -182,7 +183,10 @@ impl TermGrid {
             }
             return;
         }
-        if self.cursor.1 >= self.cols {
+        // Wide chars (CJK, emoji) occupy two cells: lead + trail marker.
+        // Zero-width joiners/combiners attach to the previous cell.
+        let cells = ch.width().unwrap_or(1).max(1).min(2);
+        if self.cursor.1 + cells > self.cols {
             self.newline();
         }
         {
@@ -193,10 +197,18 @@ impl TermGrid {
                 row[c] = TermCell {
                     ch,
                     attr,
-                    wide: 0,
+                    wide: if cells == 2 { 1 } else { 0 },
                 };
+                if cells == 2 && c + 1 < row.len() {
+                    // Trail cell: never painted, just reserves the advance.
+                    row[c + 1] = TermCell {
+                        ch: ' ',
+                        attr,
+                        wide: 2,
+                    };
+                }
             }
-            self.cursor.1 += 1;
+            self.cursor.1 += cells;
         }
     }
 
@@ -357,5 +369,32 @@ mod tests {
         g.put('b');
         g.exit_alt();
         assert_eq!(g.visible()[0][0].ch, 'a');
+    }
+
+    #[test]
+    fn wide_char_occupies_two_cells() {
+        let mut g = TermGrid::new(10, 2);
+        g.put('あ'); // wide
+        assert_eq!(g.cursor, (0, 2));
+        let v = g.visible();
+        assert_eq!(v[0][0].ch, 'あ');
+        assert_eq!(v[0][0].wide, 1);
+        assert_eq!(v[0][1].wide, 2);
+        g.put('b');
+        assert_eq!(g.cursor, (0, 3));
+        assert_eq!(g.visible()[0][2].ch, 'b');
+    }
+
+    #[test]
+    fn wide_char_wraps_at_edge() {
+        let mut g = TermGrid::new(4, 3);
+        g.put('a');
+        g.put('b');
+        g.put('c');
+        g.put('あ'); // needs 2 cells but only 1 left → wraps
+        assert_eq!(g.cursor, (1, 2));
+        let v = g.visible();
+        assert_eq!(v[0][3].ch, ' ');
+        assert_eq!(v[1][0].ch, 'あ');
     }
 }

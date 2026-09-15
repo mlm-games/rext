@@ -9,9 +9,32 @@ use repose_material::{Icon, material_symbols};
 use repose_ui::*;
 
 use crate::chrome::{layout::*, zed_chrome};
+use crate::metrics_cache::CODE_FAMILY;
 use crate::session::SessionRef;
 use crate::term_grid::{DEFAULT_BG, DEFAULT_FG, PALETTE, SharedGrid, new_shared_grid};
 use crate::term_pty::PtySession;
+
+/// Measured advance of one monospace cell in px. Single source of truth for
+/// grid sizing (cols/rows), paint stepping, and cursor placement — replaces
+/// the old `FONT_PX * 0.6` guess, which mismatched the real JetBrains Mono
+/// advance and produced the uneven letter gaps.
+fn cell_advance() -> f32 {
+    use std::sync::OnceLock;
+    static ADV: OnceLock<f32> = OnceLock::new();
+    *ADV.get_or_init(|| {
+        let m = repose_text::metrics_for_textfield(
+            "MMMMMMMMMM",
+            FONT_PX,
+            CODE_FAMILY,
+            400,
+            0,
+            0.0,
+            None,
+        );
+        let total = m.positions.last().copied().unwrap_or(FONT_PX * 6.0);
+        (total / 10.0).max(1.0)
+    })
+}
 
 material_symbols! {
     terminal: '\u{EB8E}',
@@ -321,7 +344,8 @@ fn term_canvas(tabs: Rc<RefCell<Vec<TermTab>>>, ai: usize, _text: Color) -> View
         move |scope: &mut DrawScope| {
             let w = scope.size.width;
             let h = scope.size.height;
-            let cols = ((w / (FONT_PX * 0.6)) as usize).max(20).min(400);
+            let adv = cell_advance();
+            let cols = ((w / adv) as usize).max(20).min(400);
             let rows = ((h / LINE_H) as usize).max(5).min(200);
             if let Some(t) = tabs_key.borrow().get(ai) {
                 if let Some(s) = &t.session {
@@ -362,17 +386,26 @@ fn paint_term(
     let skip = scroll_lines.min(total_extra);
     let start = visible.len().saturating_sub(rows + skip);
     let baseline = (LINE_H - FONT_PX) * 0.5;
-    let cell_w = FONT_PX * 0.6;
+    let cell_w = cell_advance();
 
+    // Indexed paint: batch same-fg runs into one draw_text call per run so
+    // shaping advances match the grid instead of accumulating per-cell error.
     let mut row_idx = 0;
-    for (vi, line) in visible.iter().skip(start).take(rows).enumerate() {
+    for line in visible.iter().skip(start).take(rows) {
         let y = row_idx as f32 * LINE_H;
         row_idx += 1;
-        let mut x = TEXT_PAD;
         let mut ci = 0;
-        while ci < cols.min(line.len()) {
+        let end = cols.min(line.len());
+        while ci < end {
             let cell = &line[ci];
-            let cw = cell_w;
+            // Wide-trail cells are spacing reserved by the lead; skip.
+            if cell.wide == 2 {
+                ci += 1;
+                continue;
+            }
+            let cells = if cell.wide == 1 { 2 } else { 1 };
+            let x = TEXT_PAD + ci as f32 * cell_w;
+            let cw = cell_w * cells as f32;
             let bg = match cell.attr.bg_kind {
                 0 => None,
                 1 => Some(PALETTE[(cell.attr.bg & 15) as usize]),
@@ -390,22 +423,72 @@ fn paint_term(
                     Px(0.0),
                 );
             }
-            if cell.ch != ' ' {
-                let fg = match cell.attr.fg_kind {
+            // Extend the run while fg/bg/attrs match and cells are narrow.
+            let mut run = String::new();
+            let mut run_cells = 0usize;
+            let fg0 = cell.attr.fg_kind;
+            let bg0 = cell.attr.bg_kind;
+            let fg_raw0 = cell.attr.fg;
+            let bg_raw0 = cell.attr.bg;
+            let bold0 = cell.attr.bold;
+            let ul0 = cell.attr.underline;
+            let mut cj = ci;
+            while cj < end {
+                let c2 = &line[cj];
+                if c2.wide == 2
+                    || c2.wide == 1
+                    || c2.attr.fg_kind != fg0
+                    || c2.attr.bg_kind != bg0
+                    || c2.attr.fg != fg_raw0
+                    || c2.attr.bg != bg_raw0
+                    || c2.attr.bold != bold0
+                    || c2.attr.underline != ul0
+                {
+                    break;
+                }
+                if c2.ch != ' ' {
+                    run.push(c2.ch);
+                } else {
+                    run.push(' ');
+                }
+                run_cells += 1;
+                cj += 1;
+            }
+            let text: String = run;
+            if !text.trim().is_empty() {
+                let fg = match fg0 {
                     0 => DEFAULT_FG,
-                    1 => PALETTE[(cell.attr.fg & 15) as usize],
-                    _ => cell.attr.fg,
+                    1 => PALETTE[(fg_raw0 & 15) as usize],
+                    _ => fg_raw0,
                 };
-                scope.draw_text(
-                    cell.ch.to_string(),
-                    Vec2 { x, y: y + baseline },
+                scope.draw_text_with_family(
+                    text,
+                    Vec2 {
+                        x,
+                        y: y + baseline,
+                    },
                     hex_color(fg),
                     Px(FONT_PX),
+                    CODE_FAMILY,
                 );
             }
-            x += cw;
-            ci += 1;
-            let _ = vi;
+            if ul0 {
+                scope.draw_rect(
+                    Rect {
+                        x,
+                        y: y + LINE_H - 2.0,
+                        w: cell_w * run_cells as f32,
+                        h: 1.0,
+                    },
+                    hex_color(match fg0 {
+                        0 => DEFAULT_FG,
+                        1 => PALETTE[(fg_raw0 & 15) as usize],
+                        _ => fg_raw0,
+                    }),
+                    Px(0.0),
+                );
+            }
+            ci = cj.max(ci + cells);
         }
     }
 
