@@ -13,6 +13,7 @@ use crate::metrics_cache::CODE_FAMILY;
 use crate::session::SessionRef;
 use crate::term_grid::{DEFAULT_BG, DEFAULT_FG, PALETTE, SharedGrid, new_shared_grid};
 use crate::term_pty::PtySession;
+use rext_core::ResolvedTask;
 
 /// Measured advance of one monospace cell in px. Single source of truth for
 /// grid sizing (cols/rows), paint stepping, and cursor placement — replaces
@@ -84,6 +85,29 @@ fn spawn_tab(cwd: std::path::PathBuf, cols: u16, rows: u16) -> TermTab {
     }
 }
 
+fn spawn_task_tab(task: &ResolvedTask, cols: u16, rows: u16) -> TermTab {
+    let grid = new_shared_grid(cols as usize, rows as usize);
+    match PtySession::spawn_task(grid.clone(), task, cols, rows) {
+        Ok(s) => TermTab {
+            session: Some(s),
+            grid,
+            scroll: 0.0,
+            title: task.resolved_label.clone(),
+            dead: false,
+        },
+        Err(e) => {
+            log::error!("task spawn: {e:?}");
+            TermTab {
+                session: None,
+                grid,
+                scroll: 0.0,
+                title: format!("task failed: {e}"),
+                dead: true,
+            }
+        }
+    }
+}
+
 pub fn TerminalPanel(session: SessionRef) -> View {
     let chrome = zed_chrome();
     let th = theme();
@@ -96,6 +120,16 @@ pub fn TerminalPanel(session: SessionRef) -> View {
 
     if tabs.borrow().is_empty() {
         tabs.borrow_mut().push(spawn_tab(cwd.clone(), 80, 24));
+    }
+
+    let queued: Vec<ResolvedTask> = session.pending_spawns.borrow_mut().drain(..).collect();
+    if !queued.is_empty() {
+        let mut ts = tabs.borrow_mut();
+        let mut a = active.borrow_mut();
+        for task in queued {
+            ts.push(spawn_task_tab(&task, 80, 24));
+            *a = ts.len() - 1;
+        }
     }
 
     {

@@ -1,4 +1,4 @@
-use rext_core::{Cmd, DiagnosticsStore, Workspace};
+use rext_core::{Cmd, DiagnosticsStore, ResolvedTask, TaskContext, TaskInventory, Workspace};
 use repose_core::*;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,8 @@ pub struct Session {
     pub palette_sel: Mutable<usize>,
     pub tree: RefCell<Vec<TreeEntry>>,
     pub diagnostics: RefCell<DiagnosticsStore>,
+    pub tasks: RefCell<TaskInventory>,
+    pub pending_spawns: RefCell<Vec<ResolvedTask>>,
 }
 
 #[derive(Clone, Debug)]
@@ -315,12 +317,80 @@ pub fn use_session() -> SessionRef {
             palette_sel: Mutable::new(0usize),
             tree: RefCell::new(tree),
             diagnostics: RefCell::new(DiagnosticsStore::default()),
+            tasks: RefCell::new(TaskInventory::default()),
+            pending_spawns: RefCell::new(Vec::new()),
             ws: RefCell::new(Workspace::new(root, initial)),
         }
     })
 }
 
 impl Session {
+    pub fn refresh_tasks(&self) {
+        let root = self.ws.borrow().root.clone();
+        self.tasks.borrow_mut().refresh(&root);
+    }
+
+    pub fn task_context(&self) -> TaskContext {
+        use rext_core::VariableName;
+        let ws = self.ws.borrow();
+        let mut cx = TaskContext::default();
+        cx.vars.insert(
+            VariableName::WorktreeRoot,
+            ws.root.display().to_string(),
+        );
+        if let Some(h) = ws.active() {
+            if let Some(p) = h.buffer.path() {
+                cx.vars.insert(VariableName::File, p.display().to_string());
+                if let Ok(rel) = p.strip_prefix(&ws.root) {
+                    cx.vars.insert(
+                        VariableName::RelativeFile,
+                        rel.display().to_string(),
+                    );
+                    if let Some(parent) = rel.parent() {
+                        cx.vars.insert(
+                            VariableName::RelativeDir,
+                            parent.display().to_string(),
+                        );
+                    }
+                }
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    cx.vars.insert(VariableName::Filename, name.to_string());
+                    cx.vars.insert(
+                        VariableName::Stem,
+                        name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name).to_string(),
+                    );
+                }
+                if let Some(dir) = p.parent() {
+                    cx.vars.insert(
+                        VariableName::Dirname,
+                        dir.display().to_string(),
+                    );
+                }
+            }
+            let (a, b) = h.selections.primary().range_offsets(&h.buffer);
+            if a != b {
+                cx.vars.insert(
+                    VariableName::SelectedText,
+                    h.buffer.slice_chars(a, b),
+                );
+            }
+        }
+        cx
+    }
+
+    pub fn schedule_task(&self, template_idx: usize) {
+        let root = self.ws.borrow().root.clone();
+        let cx = self.task_context();
+        let template = match self.tasks.borrow().templates.get(template_idx).cloned() {
+            Some(t) => t,
+            None => return,
+        };
+        let resolved: ResolvedTask =
+            self.tasks.borrow_mut().schedule(&template, &root, &cx);
+        self.pending_spawns.borrow_mut().push(resolved);
+        self.bump();
+    }
+
     pub fn refresh_lints(&self) {
         use crate::panels::problems::lint_buffer;
         use rext_core::DiagnosticSet;

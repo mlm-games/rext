@@ -1,5 +1,6 @@
 use crate::term_grid::SharedGrid;
 use crate::term_vte::GridPerform;
+use rext_core::ResolvedTask;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{
@@ -50,6 +51,47 @@ impl PtySession {
         if shell_path.ends_with("bash") {
             cmd.arg("-i");
         }
+        Self::spawn_with(grid, pair, cmd, shell_path, cols, rows)
+    }
+
+    pub fn spawn_task(
+        grid: SharedGrid,
+        task: &ResolvedTask,
+        cols: u16,
+        rows: u16,
+    ) -> anyhow::Result<Self> {
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+
+        let pty_system = native_pty_system();
+        let pair = pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+
+        let mut cmd = CommandBuilder::new(&task.command);
+        for a in &task.args {
+            cmd.arg(a);
+        }
+        cmd.cwd(&task.cwd);
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        for (k, v) in &task.env {
+            cmd.env(k, v);
+        }
+        Self::spawn_with(grid, pair, cmd, task.resolved_label.clone(), cols, rows)
+    }
+
+    fn spawn_with(
+        grid: SharedGrid,
+        pair: portable_pty::PtyPair,
+        cmd: portable_pty::CommandBuilder,
+        title: String,
+        cols: u16,
+        rows: u16,
+    ) -> anyhow::Result<Self> {
+        let _ = (cols, rows);
 
         let mut child = pair.slave.spawn_command(cmd)?;
         drop(pair.slave);
@@ -93,7 +135,7 @@ impl PtySession {
             master,
             killer,
             grid,
-            title: Arc::new(Mutex::new(shell_path)),
+            title: Arc::new(Mutex::new(title)),
             alive,
         })
     }
