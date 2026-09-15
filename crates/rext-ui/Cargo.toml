@@ -1,0 +1,18 @@
+[package]
+name = "rext-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rext-core.workspace = true
+repose-core.workspace = true
+repose-ui.workspace = true
+repose-material.workspace = true
+repose-canvas.workspace = true
+repose-docking.workspace = true
+repose-platform.workspace = true
+repose-text.workspace = true
+log.workspace = true
+anyhow.workspace = true
+unicode-segmentation.workspace = true

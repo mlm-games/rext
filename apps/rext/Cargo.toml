@@ -1,0 +1,17 @@
+[package]
+name = "rext"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rext"
+path = "src/main.rs"
+
+[dependencies]
+repose-platform.workspace = true
+repose-core.workspace = true
+repose-app.workspace = true
+rext-ui.workspace = true
+env_logger.workspace = true
+anyhow.workspace = true
